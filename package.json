@@ -13,6 +13,11 @@
     "vue"
   ],
   "license": "MIT",
+  "author": "Jamie",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "dist"
   ],
@@ -34,6 +39,7 @@
     "dev:playground": "vite --config playground/vite.config.ts",
     "format": "oxfmt",
     "lint": "oxlint",
+    "release": "bumpp && changelogen --release --push && npm publish --access public",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit"
@@ -46,6 +52,8 @@
     "@types/node": "^26.1.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.11",
+    "bumpp": "^11.1.0",
+    "changelogen": "^0.6.2",
     "happy-dom": "^20.10.6",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
