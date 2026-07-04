@@ -1,4 +1,5 @@
 import type { Directive } from 'vue'
+
 import type { ItemKey } from './types'
 
 /**
@@ -42,14 +43,14 @@ export function createItemDirective(registry: ItemRegistry): Directive<HTMLEleme
     mounted(el, binding) {
       registry.set(binding.value, el)
     },
+    unmounted(_el, binding) {
+      registry.delete(binding.value)
+    },
     updated(el, binding) {
       if (binding.value !== binding.oldValue) {
         if (binding.oldValue != null) registry.delete(binding.oldValue)
         registry.set(binding.value, el)
       }
-    },
-    unmounted(_el, binding) {
-      registry.delete(binding.value)
     },
   }
 }

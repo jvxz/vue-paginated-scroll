@@ -9,9 +9,7 @@ export interface ScrollGeometry {
 
 /** Distance in px from the current scroll position to the given edge. */
 export function distanceToEdge(g: ScrollGeometry, direction: Direction): number {
-  return direction === 'backward'
-    ? g.scrollTop
-    : Math.max(0, g.scrollHeight - g.clientHeight - g.scrollTop)
+  return direction === 'backward' ? g.scrollTop : Math.max(0, g.scrollHeight - g.clientHeight - g.scrollTop)
 }
 
 /** The user is at the live edge when scrolled to (or within a hair of) the bottom. */
@@ -51,11 +49,11 @@ export function resolveTrigger(input: ArmInput): TriggerDebugInfo & { shouldFire
   const shouldFire = armed && withinZone
 
   return {
-    distanceToEdge: input.distanceToEdge,
-    triggerPx: input.triggerPx,
     armed,
     disarmedReason,
+    distanceToEdge: input.distanceToEdge,
     shouldFire,
+    triggerPx: input.triggerPx,
   }
 }
 

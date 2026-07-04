@@ -5,15 +5,15 @@ A headless Vue composable for implementing bidirectional paginated scrolling (th
 ## Language
 
 **Trigger**:
-The per-direction condition that fires a pagination: the user has scrolled within `triggerDistance` (a viewport-multiple) of an edge. Implemented as **pure scroll-position math** over `scrollTop`/`scrollHeight`/`clientHeight` — deliberately *not* a DOM sentinel element or `IntersectionObserver`, because loop-prevention (re-arm latching, direction gating) is far easier to reason about against a continuous distance-to-edge scalar than against binary visibility events. A trigger can be *armed* or *disarmed* (by direction gating, re-arm latching, or exhaustion).
+The per-direction condition that fires a pagination: the user has scrolled within `triggerDistance` (a viewport-multiple) of an edge. Implemented as **pure scroll-position math** over `scrollTop`/`scrollHeight`/`clientHeight` — deliberately _not_ a DOM sentinel element or `IntersectionObserver`, because loop-prevention (re-arm latching, direction gating) is far easier to reason about against a continuous distance-to-edge scalar than against binary visibility events. A trigger can be _armed_ or _disarmed_ (by direction gating, re-arm latching, or exhaustion).
 _Avoid_: sentinel (rejected — implies a DOM marker element, which this is not), IntersectionObserver, hitbox.
 
 **Live edge**:
-The forward-most boundary of the source — the newest item. "At the live edge" means the window's forward boundary is the newest item *and* the user is scrolled to the bottom, so newly-arriving items should append into view. Exposed reactively (e.g. `isAtLiveEdge`) so the consumer can drive a jump-to-latest affordance.
+The forward-most boundary of the source — the newest item. "At the live edge" means the window's forward boundary is the newest item _and_ the user is scrolled to the bottom, so newly-arriving items should append into view. Exposed reactively (e.g. `isAtLiveEdge`) so the consumer can drive a jump-to-latest affordance.
 _Avoid_: bottom (ambiguous with scroll position), tail (use only in "follow tail"), head.
 
 **Follow tail**:
-An opt-in behavior (`followTail`) where the library auto-pins the view to the live edge when new items arrive *iff* the user is already at the live edge. If the user has scrolled up into history, arriving items must never yank them down. Part of the "feature-rich but opt-in" posture: the core is a pure pagination/windowing engine; live behaviors like this are layered features nobody pays for unless enabled.
+An opt-in behavior (`followTail`) where the library auto-pins the view to the live edge when new items arrive _iff_ the user is already at the live edge. If the user has scrolled up into history, arriving items must never yank them down. Part of the "feature-rich but opt-in" posture: the core is a pure pagination/windowing engine; live behaviors like this are layered features nobody pays for unless enabled.
 _Avoid_: autoscroll, stick to bottom (informal), tailing.
 
 **Direction**:
@@ -29,7 +29,7 @@ The first or last item currently present in the source (see below), tracked by i
 _Avoid_: sentinel (that term is reserved for the DOM trigger concept), boundary item, anchor item.
 
 **Source**:
-The full backing array the consumer owns, passes into the composable, and mutates — but *only* from inside their own pagination-fetch code (e.g. an `onBeforePaginate` hook). The library never writes to the source, in fetch or trim. It is not what the UI renders directly.
+The full backing array the consumer owns, passes into the composable, and mutates — but _only_ from inside their own pagination-fetch code (e.g. an `onBeforePaginate` hook). The library never writes to the source, in fetch or trim. It is not what the UI renders directly.
 _Avoid_: raw data, backing store, dataset.
 
 **Render latency**:
@@ -41,7 +41,7 @@ A real, currently-visible item element the library pins during a pagination so i
 _Avoid_: scroll token, pivot, reference node.
 
 **Buffer**:
-The runway of rendered-but-not-visible content the library deliberately keeps on the *opposite* side of the scroll direction after a trim. Expressed as a viewport-multiple. Serves two jobs: (1) it stops the just-trimmed edge from sitting right at the trigger point (which would re-fire pagination — see **Pagination loop**), and (2) it gives the user reaction runway if they reverse scroll direction before the next trigger should fire.
+The runway of rendered-but-not-visible content the library deliberately keeps on the _opposite_ side of the scroll direction after a trim. Expressed as a viewport-multiple. Serves two jobs: (1) it stops the just-trimmed edge from sitting right at the trigger point (which would re-fire pagination — see **Pagination loop**), and (2) it gives the user reaction runway if they reverse scroll direction before the next trigger should fire.
 _Avoid_: breathing room (informal), overscan (that term implies virtualization, which this is not), padding, margin.
 
 **Pagination loop**:

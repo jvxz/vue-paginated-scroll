@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest'
-import { defineComponent, h, nextTick, ref, shallowRef, withDirectives, type VNode } from 'vue'
+import type { VNode } from 'vue'
+
 import { mount } from '@vue/test-utils'
+import { describe, it, expect } from 'vitest'
+import { defineComponent, h, nextTick, ref, shallowRef, withDirectives } from 'vue'
+
 import { usePaginatedScroll } from '../src/usePaginatedScroll'
 
 const VIEWPORT = 800
@@ -23,19 +26,20 @@ function heightFor(id: number): number {
  * intercept each one individually.
  */
 function installLayoutStub(container: HTMLElement, scrollTopRef: { value: number }) {
-  Object.defineProperty(container, 'clientHeight', { get: () => VIEWPORT, configurable: true })
+  Object.defineProperty(container, 'clientHeight', { configurable: true, get: () => VIEWPORT })
   Object.defineProperty(container, 'scrollTop', {
     get: () => scrollTopRef.value,
     // Real browsers fire a 'scroll' event on programmatic writes too — mirror
     // that here, since the library's own corrective writes (restoreAnchor,
     // edge jumps) need to be observable to onScrollFrame just like a user's.
-    set: (v) => {
+    set: v => {
       scrollTopRef.value = v
       container.dispatchEvent(new Event('scroll'))
     },
     configurable: true,
   })
   Object.defineProperty(container, 'scrollHeight', {
+    configurable: true,
     get: () => {
       let total = 0
       for (const child of Array.from(container.children)) {
@@ -43,24 +47,43 @@ function installLayoutStub(container: HTMLElement, scrollTopRef: { value: number
       }
       return total
     },
-    configurable: true,
   })
 
   HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement): DOMRect {
     if (this === container) {
-      return { top: 0, bottom: VIEWPORT, left: 0, right: 0, width: 0, height: VIEWPORT, x: 0, y: 0, toJSON() {} } as DOMRect
+      return {
+        bottom: VIEWPORT,
+        height: VIEWPORT,
+        left: 0,
+        right: 0,
+        toJSON() {},
+        top: 0,
+        width: 0,
+        x: 0,
+        y: 0,
+      } as DOMRect
     }
     if (this.dataset.h !== undefined && this.parentElement === container) {
       let top = 0
-      for (const child of Array.from(container.children)) {
+      for (const child of [...container.children]) {
         if (child === this) break
         top += Number((child as HTMLElement).dataset.h ?? 0)
       }
       const height = Number(this.dataset.h ?? 0)
       const scrollTop = scrollTopRef.value
-      return { top: top - scrollTop, bottom: top - scrollTop + height, height, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON() {} } as DOMRect
+      return {
+        bottom: top - scrollTop + height,
+        height,
+        left: 0,
+        right: 0,
+        toJSON() {},
+        top: top - scrollTop,
+        width: 0,
+        x: 0,
+        y: 0,
+      } as DOMRect
     }
-    return { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} } as DOMRect
+    return { bottom: 0, height: 0, left: 0, right: 0, toJSON() {}, top: 0, width: 0, x: 0, y: 0 } as DOMRect
   }
 }
 
@@ -75,12 +98,18 @@ describe('usePaginatedScroll — trim tuning', () => {
     const scrollTopRef = { value: 0 }
 
     const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
       setup() {
         const container = ref<HTMLElement | null>(null)
         const api = usePaginatedScroll(container, {
           source,
           getKey: (id: number) => id,
-          onBeforePaginate: async (dir) => {
+          onBeforePaginate: async dir => {
             if (dir !== 'backward') return
             const first = source.value[0]!
             const start = Math.max(0, first - 30)
@@ -91,7 +120,7 @@ describe('usePaginatedScroll — trim tuning', () => {
             source.value = [...ALL_IDS.slice(start, first), ...source.value]
             canOlder.value = start > 0
           },
-          hasMore: (dir) => (dir === 'backward' ? canOlder.value : false),
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
           targetHeight: TARGET_MULTIPLE,
           buffer: 0.3,
           triggerDistance: 0.5,
@@ -100,23 +129,17 @@ describe('usePaginatedScroll — trim tuning', () => {
         })
         return { container, ...api }
       },
-      render() {
-        const items: VNode[] = this.window.map((id: number) =>
-          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
-        )
-        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
-      },
     })
 
     const wrapper = mount(Comp, { attachTo: document.body })
     const container = wrapper.vm.container as HTMLElement
     installLayoutStub(container, scrollTopRef)
     await nextTick()
-    await new Promise((r) => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
 
     function currentHeight(): number {
       const firstRect = (container.children[0] as HTMLElement)?.getBoundingClientRect()
-      const lastRect = (container.children[container.children.length - 1] as HTMLElement)?.getBoundingClientRect()
+      const lastRect = (container.children.at(-1) as HTMLElement)?.getBoundingClientRect()
       if (!firstRect || !lastRect) return 0
       return lastRect.bottom - firstRect.top
     }
@@ -127,10 +150,10 @@ describe('usePaginatedScroll — trim tuning', () => {
     for (let round = 0; round < 10; round++) {
       scrollTopRef.value = 0
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 200))
+      await new Promise(r => setTimeout(r, 200))
       scrollTopRef.value = 9999
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 60))
+      await new Promise(r => setTimeout(r, 60))
     }
 
     // Before the fix this compounded well past 2x targetHeight over a same-
@@ -154,12 +177,18 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
     const scrollTopRef = { value: 0 }
 
     const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
       setup() {
         const container = ref<HTMLElement | null>(null)
         const api = usePaginatedScroll(container, {
           source,
           getKey: (id: number) => id,
-          onBeforePaginate: async (dir) => {
+          onBeforePaginate: async dir => {
             // Forward never fetches — hasMore('forward') is always false, so
             // any forward growth observed below can only come from revealing
             // already-fetched buffered overflow, not a fetch.
@@ -173,7 +202,7 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
             source.value = [...ALL_IDS.slice(start, first), ...source.value]
             canOlder.value = start > 0
           },
-          hasMore: (dir) => (dir === 'backward' ? canOlder.value : false),
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
           targetHeight: TARGET_MULTIPLE,
           buffer: 0.3,
           triggerDistance: 0.5,
@@ -182,19 +211,13 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
         })
         return { container, ...api }
       },
-      render() {
-        const items: VNode[] = this.window.map((id: number) =>
-          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
-        )
-        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
-      },
     })
 
     const wrapper = mount(Comp, { attachTo: document.body })
     const container = wrapper.vm.container as HTMLElement
     installLayoutStub(container, scrollTopRef)
     await nextTick()
-    await new Promise((r) => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
 
     // Drive a long backward-only streak (same pattern as the trim-tuning
     // test above) until history is exhausted. This leaves the window's
@@ -203,7 +226,7 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
     for (let round = 0; round < 40; round++) {
       scrollTopRef.value = 0
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 200))
+      await new Promise(r => setTimeout(r, 200))
       // Re-arm the backward latch by moving past its hysteresis threshold
       // (triggerPx * 1.5 = 600px) — but stay well short of the forward edge's
       // own trigger zone, or this swing spuriously arms a forward
@@ -211,12 +234,12 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
       // this round just made (see ADR-0002 direction gating).
       scrollTopRef.value = 700
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 60))
+      await new Promise(r => setTimeout(r, 60))
       if (!canOlder.value) break
     }
 
     expect(canOlder.value).toBe(false) // confirms a genuinely long streak happened
-    const lastIdAfterBackward = wrapper.vm.window[wrapper.vm.window.length - 1]
+    const lastIdAfterBackward = wrapper.vm.window.at(-1)
     expect(lastIdAfterBackward).toBeLessThan(LIVE_EDGE)
 
     // Re-seed lastScrollTop at the current (post-streak) position: the loop
@@ -224,7 +247,7 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
     // 'scroll' event, so without this the next jump would be compared
     // against a stale lastScrollTop and could misdetect direction.
     container.dispatchEvent(new Event('scroll'))
-    await new Promise((r) => setTimeout(r, 30))
+    await new Promise(r => setTimeout(r, 30))
 
     // Scroll forward continuously, clamping to the native ceiling each tick
     // like a real browser would — this is what previously produced a
@@ -240,7 +263,7 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
       const ceiling = Math.max(0, container.scrollHeight - container.clientHeight)
       scrollTopRef.value = Math.min(ceiling, scrollTopRef.value + 150)
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 20)) // let scheduleScrollFrame's debounce timer fire
+      await new Promise(r => setTimeout(r, 20)) // let scheduleScrollFrame's debounce timer fire
       for (let settle = 0; settle < 50 && wrapper.vm.isPaginating.forward; settle++) {
         await nextTick()
       }
@@ -248,9 +271,9 @@ describe('usePaginatedScroll — forward growth from buffered overflow', () => {
       await nextTick()
       if (wrapper.vm.isAtLiveEdge) break
     }
-    await new Promise((r) => setTimeout(r, 200))
+    await new Promise(r => setTimeout(r, 200))
 
-    expect(wrapper.vm.window[wrapper.vm.window.length - 1]).toBe(LIVE_EDGE)
+    expect(wrapper.vm.window.at(-1)).toBe(LIVE_EDGE)
     expect(wrapper.vm.isAtLiveEdge).toBe(true)
   }, 20000)
 })
@@ -266,12 +289,18 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
     const scrollTopRef = { value: 0 }
 
     const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
       setup() {
         const container = ref<HTMLElement | null>(null)
         const api = usePaginatedScroll(container, {
           source,
           getKey: (id: number) => id,
-          onBeforePaginate: async (dir) => {
+          onBeforePaginate: async dir => {
             // Forward never fetches — any forward growth below can only come
             // from revealing already-fetched buffered overflow.
             if (dir !== 'backward') return
@@ -284,7 +313,7 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
             source.value = [...ALL_IDS.slice(start, first), ...source.value]
             canOlder.value = start > 0
           },
-          hasMore: (dir) => (dir === 'backward' ? canOlder.value : false),
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
           targetHeight: TARGET_MULTIPLE,
           buffer: 0.3,
           triggerDistance: 0.5,
@@ -294,19 +323,13 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
         })
         return { container, ...api }
       },
-      render() {
-        const items: VNode[] = this.window.map((id: number) =>
-          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
-        )
-        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
-      },
     })
 
     const wrapper = mount(Comp, { attachTo: document.body })
     const container = wrapper.vm.container as HTMLElement
     installLayoutStub(container, scrollTopRef)
     await nextTick()
-    await new Promise((r) => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
 
     // Phase 1: a long backward-only streak builds deep history in `source`
     // while trimWindow's bottom-first trim (dir === 'backward') shrinks the
@@ -316,10 +339,10 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
     for (let round = 0; round < 8; round++) {
       scrollTopRef.value = 0
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 200))
+      await new Promise(r => setTimeout(r, 200))
       scrollTopRef.value = 700
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 60))
+      await new Promise(r => setTimeout(r, 60))
     }
     const startAfterBuildup = wrapper.vm.window[0]!
     expect(startAfterBuildup).toBeLessThan(LIVE_EDGE - SEED + 1) // real backward depth was fetched
@@ -332,7 +355,7 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
     for (let round = 0; round < 6; round++) {
       scrollTopRef.value = Math.max(0, container.scrollHeight - container.clientHeight)
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 200))
+      await new Promise(r => setTimeout(r, 200))
     }
     const startAfterForwardTrim = wrapper.vm.window[0]!
     expect(startAfterForwardTrim).toBeGreaterThan(startAfterBuildup) // backward edge was trimmed forward, leaving buffered overflow behind it
@@ -343,12 +366,12 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
     // that only partially satisfied the needed runway left the latch stuck
     // disarmed once this burst ended, permanently stalling further reveals.
     container.dispatchEvent(new Event('scroll'))
-    await new Promise((r) => setTimeout(r, 30))
+    await new Promise(r => setTimeout(r, 30))
     const burstStart = scrollTopRef.value
     for (let i = 1; i <= 50; i++) {
       scrollTopRef.value = Math.max(0, burstStart - (burstStart * i) / 50)
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 2))
+      await new Promise(r => setTimeout(r, 2))
     }
     scrollTopRef.value = 0
     container.dispatchEvent(new Event('scroll'))
@@ -356,7 +379,7 @@ describe('usePaginatedScroll — fast-scroll re-arm', () => {
     // No further scroll input at all — settle passively, as a real gesture
     // that has ended would.
     for (let i = 0; i < 30 && wrapper.vm.debugState?.triggers.backward.disarmedReason === 'latched'; i++) {
-      await new Promise((r) => setTimeout(r, 100))
+      await new Promise(r => setTimeout(r, 100))
     }
 
     expect(wrapper.vm.window[0]).toBeLessThan(startAfterForwardTrim) // kept revealing, not stuck
@@ -375,12 +398,18 @@ describe('usePaginatedScroll — direction gating vs self-inflicted scrollTop wr
     const scrollTopRef = { value: 0 }
 
     const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
       setup() {
         const container = ref<HTMLElement | null>(null)
         const api = usePaginatedScroll(container, {
           source,
           getKey: (id: number) => id,
-          onBeforePaginate: async (dir) => {
+          onBeforePaginate: async dir => {
             // Forward never fetches — any forward growth below can only come
             // from revealing already-fetched buffered overflow, the same as
             // the fast-scroll re-arm test above.
@@ -394,7 +423,7 @@ describe('usePaginatedScroll — direction gating vs self-inflicted scrollTop wr
             source.value = [...ALL_IDS.slice(start, first), ...source.value]
             canOlder.value = start > 0
           },
-          hasMore: (dir) => (dir === 'backward' ? canOlder.value : false),
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
           targetHeight: TARGET_MULTIPLE,
           buffer: 0.3,
           triggerDistance: 0.5,
@@ -404,19 +433,13 @@ describe('usePaginatedScroll — direction gating vs self-inflicted scrollTop wr
         })
         return { container, ...api }
       },
-      render() {
-        const items: VNode[] = this.window.map((id: number) =>
-          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
-        )
-        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
-      },
     })
 
     const wrapper = mount(Comp, { attachTo: document.body })
     const container = wrapper.vm.container as HTMLElement
     installLayoutStub(container, scrollTopRef)
     await nextTick()
-    await new Promise((r) => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
 
     // Phase 1: build deep backward history, same as the fast-scroll re-arm
     // test — this leaves a large gap of already-fetched-but-unrendered
@@ -424,10 +447,10 @@ describe('usePaginatedScroll — direction gating vs self-inflicted scrollTop wr
     for (let round = 0; round < 8; round++) {
       scrollTopRef.value = 0
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 200))
+      await new Promise(r => setTimeout(r, 200))
       scrollTopRef.value = 700
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 60))
+      await new Promise(r => setTimeout(r, 60))
     }
     const startAfterBuildup = wrapper.vm.window[0]!
     expect(startAfterBuildup).toBeLessThan(LIVE_EDGE - SEED + 1) // real backward depth was fetched
@@ -443,11 +466,11 @@ describe('usePaginatedScroll — direction gating vs self-inflicted scrollTop wr
     while (Date.now() - start < 3000) {
       scrollTopRef.value = Math.max(0, container.scrollHeight - container.clientHeight)
       container.dispatchEvent(new Event('scroll'))
-      await new Promise((r) => setTimeout(r, 20))
+      await new Promise(r => setTimeout(r, 20))
     }
 
     expect(wrapper.vm.isAtLiveEdge).toBe(true)
-    expect(wrapper.vm.window[wrapper.vm.window.length - 1]).toBe(LIVE_EDGE)
+    expect(wrapper.vm.window.at(-1)).toBe(LIVE_EDGE)
   }, 20000)
 })
 
@@ -463,12 +486,22 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
     let backwardFetchCount = 0
 
     const Comp = defineComponent({
+      render() {
+        // Fixed small height (not the shared heightFor, which occasionally
+        // assigns a 200-380px block): the point of this test is that ONE
+        // fetch page is much smaller than the required runway, which only
+        // holds if every item's contribution is small and predictable.
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': 40 }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
       setup() {
         const container = ref<HTMLElement | null>(null)
         const api = usePaginatedScroll(container, {
           source,
           getKey: (id: number) => id,
-          onBeforePaginate: async (dir) => {
+          onBeforePaginate: async dir => {
             if (dir !== 'backward') return
             backwardFetchCount++
             // A single deliberately tiny page (2 items, ~48px each) — far
@@ -485,7 +518,7 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
             source.value = [...ALL_IDS.slice(start, first), ...source.value]
             canOlder.value = start > 0
           },
-          hasMore: (dir) => (dir === 'backward' ? canOlder.value : false),
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
           targetHeight: TARGET_MULTIPLE,
           buffer: 0.3,
           triggerDistance: 0.5,
@@ -494,23 +527,13 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
         })
         return { container, ...api }
       },
-      render() {
-        // Fixed small height (not the shared heightFor, which occasionally
-        // assigns a 200-380px block): the point of this test is that ONE
-        // fetch page is much smaller than the required runway, which only
-        // holds if every item's contribution is small and predictable.
-        const items: VNode[] = this.window.map((id: number) =>
-          withDirectives(h('div', { key: id, 'data-h': 40 }), [[this.vItem, id]]),
-        )
-        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
-      },
     })
 
     const wrapper = mount(Comp, { attachTo: document.body })
     const container = wrapper.vm.container as HTMLElement
     installLayoutStub(container, scrollTopRef)
     await nextTick()
-    await new Promise((r) => setTimeout(r, 300)) // bootstrap fill
+    await new Promise(r => setTimeout(r, 300)) // bootstrap fill
 
     backwardFetchCount = 0
 
@@ -521,7 +544,7 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
     // would read as scrollTop increasing (0 -> 50) and misdetect the direction
     // as forward instead of backward.
     container.dispatchEvent(new Event('scroll'))
-    await new Promise((r) => setTimeout(r, 30)) // let the coalesced scroll frame actually run
+    await new Promise(r => setTimeout(r, 30)) // let the coalesced scroll frame actually run
 
     // A single scroll event into the trigger zone — no further scroll input
     // at all. Before the fix, one fetch's worth of runway (~96px) was nowhere
@@ -533,7 +556,7 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
     scrollTopRef.value = 50
     container.dispatchEvent(new Event('scroll'))
 
-    await new Promise((r) => setTimeout(r, 2000))
+    await new Promise(r => setTimeout(r, 2000))
 
     expect(backwardFetchCount).toBeGreaterThan(3)
   })

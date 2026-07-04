@@ -1,27 +1,27 @@
+import vue from '@vitejs/plugin-vue'
 /// <reference types="node" />
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
-import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
-  plugins: [vue()],
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'VuePaginatedScroll',
-      fileName: (format) => (format === 'es' ? 'index.js' : 'index.cjs'),
+      fileName: format => (format === 'es' ? 'index.js' : 'index.cjs'),
       formats: ['es', 'cjs'],
+      name: 'VuePaginatedScroll',
     },
     rollupOptions: {
       external: ['vue', '@vueuse/core'],
       output: {
         globals: {
-          vue: 'Vue',
           '@vueuse/core': 'VueUse',
+          vue: 'Vue',
         },
       },
     },
   },
+  plugins: [vue()],
   test: {
     environment: 'happy-dom',
   },

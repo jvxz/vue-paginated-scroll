@@ -43,10 +43,8 @@ export function makeMessage(id: number): Message {
     blockHeight = 120 + Math.floor(rnd() * 140)
   }
   const wordCount = kind === 'text' ? 2 + Math.floor(rnd() * 40) : 3 + Math.floor(rnd() * 8)
-  const text = Array.from({ length: wordCount }, () => WORDS[Math.floor(rnd() * WORDS.length)]).join(
-    ' ',
-  )
-  return { id, author, kind, text, blockHeight }
+  const text = Array.from({ length: wordCount }, () => WORDS[Math.floor(rnd() * WORDS.length)]).join(' ')
+  return { author, blockHeight, id, kind, text }
 }
 
 /**
@@ -68,7 +66,7 @@ export class FakeTimeline {
   }
 
   private delay(): Promise<void> {
-    return new Promise((r) => setTimeout(r, this.latency))
+    return new Promise(r => setTimeout(r, this.latency))
   }
 
   private async fetchRange(start: number, end: number): Promise<Message[]> {

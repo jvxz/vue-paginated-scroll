@@ -2,22 +2,23 @@
   "name": "vue-paginated-scroll",
   "version": "0.0.0",
   "description": "Headless Vue composable for stable, bidirectional paginated scrolling",
-  "type": "module",
-  "license": "MIT",
   "keywords": [
-    "vue",
-    "composable",
-    "pagination",
-    "infinite-scroll",
-    "scroll",
     "chat",
-    "timeline",
+    "composable",
+    "headless",
+    "infinite-scroll",
     "matrix",
-    "headless"
+    "pagination",
+    "scroll",
+    "timeline",
+    "vue"
   ],
+  "license": "MIT",
   "files": [
     "dist"
   ],
+  "type": "module",
+  "sideEffects": false,
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -28,30 +29,34 @@
       "require": "./dist/index.cjs"
     }
   },
-  "sideEffects": false,
   "scripts": {
     "build": "vite build && vue-tsc --declaration --emitDeclarationOnly -p tsconfig.build.json",
     "dev": "vite build --watch",
     "dev:playground": "vite --config playground/vite.config.ts",
-    "typecheck": "vue-tsc --noEmit",
+    "format": "oxfmt",
+    "lint": "oxlint",
     "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "peerDependencies": {
-    "vue": "^3.4.0"
+    "test:watch": "vitest",
+    "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
     "@vueuse/core": "^14.3.0"
   },
   "devDependencies": {
+    "@e18e/eslint-plugin": "^0.5.1",
     "@types/node": "^26.1.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^20.10.6",
+    "oxfmt": "^0.57.0",
+    "oxlint": "^1.72.0",
     "typescript": "^6.0.3",
     "vite": "^8.1.3",
     "vitest": "^4.1.9",
     "vue": "^3.5.39",
     "vue-tsc": "^3.3.6"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0"
   }
 }

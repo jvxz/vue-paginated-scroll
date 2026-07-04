@@ -1,29 +1,13 @@
-import {
-  computed,
-  nextTick,
-  onMounted,
-  onBeforeUnmount,
-  ref,
-  toValue,
-  watch,
-  type Ref,
-} from 'vue'
+import type { Ref } from 'vue'
+
 import { useElementSize, useEventListener } from '@vueuse/core'
-import {
-  distanceToEdge,
-  isSafeToTrim,
-  isScrolledToForwardEnd,
-  resolveTrigger,
-  type ScrollGeometry,
-} from './geometry'
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, toValue, watch } from 'vue'
+
+import type { ScrollGeometry } from './geometry'
+import type { Direction, ItemKey, PaginatedScroll, PaginatedScrollOptions, DebugState } from './types'
+
+import { distanceToEdge, isSafeToTrim, isScrolledToForwardEnd, resolveTrigger } from './geometry'
 import { ItemRegistry, createItemDirective } from './registry'
-import type {
-  Direction,
-  ItemKey,
-  PaginatedScroll,
-  PaginatedScrollOptions,
-  DebugState,
-} from './types'
 
 const DIRECTIONS: Direction[] = ['backward', 'forward']
 const OPPOSITE: Record<Direction, Direction> = { backward: 'forward', forward: 'backward' }
@@ -55,17 +39,16 @@ export function usePaginatedScroll<T>(
 
   // Resolved via toValue on each read so options stay reactive.
   const cfg = {
-    targetHeight: () => toValue(options.targetHeight) ?? 3,
     buffer: () => toValue(options.buffer) ?? 0.3,
-    triggerDistance: () => toValue(options.triggerDistance) ?? 0.5,
-    maxItems: () => toValue(options.maxItems) ?? 250,
-    followTail: () => toValue(options.followTail) ?? false,
     debug: () => toValue(options.debug) ?? false,
+    followTail: () => toValue(options.followTail) ?? false,
+    maxItems: () => toValue(options.maxItems) ?? 250,
     slowPaginationMs: () => toValue(options.slowPaginationMs) ?? 50,
+    targetHeight: () => toValue(options.targetHeight) ?? 3,
+    triggerDistance: () => toValue(options.triggerDistance) ?? 0.5,
   }
 
-  const hasMoreFor = (d: Direction): boolean =>
-    options.hasMore ? toValue(options.hasMore(d)) : true
+  const hasMoreFor = (d: Direction): boolean => (options.hasMore ? toValue(options.hasMore(d)) : true)
 
   const sourceItems = computed<readonly T[]>(() => toValue(options.source) ?? [])
 
@@ -89,7 +72,7 @@ export function usePaginatedScroll<T>(
     if (s === undefined) s = 0
     if (e === undefined) e = items.length - 1
     if (s > e) [s, e] = [e, s]
-    return { s, e }
+    return { e, s }
   }
 
   const window = computed<T[]>(() => {
@@ -108,12 +91,11 @@ export function usePaginatedScroll<T>(
   // clientHeight is synchronous; viewportHeight lags a frame behind on first paint.
   const { height: viewportHeight } = useElementSize(container)
 
-  const currentViewportPx = (): number =>
-    container.value?.clientHeight || viewportHeight.value || 0
+  const currentViewportPx = (): number => container.value?.clientHeight || viewportHeight.value || 0
 
   const px = (multiple: number) => multiple * currentViewportPx()
 
-  const delay = (ms = 16): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+  const delay = (ms = 16): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
   /** Resolves once the container has a real, stable layout height (not a cold-load 0/tiny read). */
   async function waitForStableViewport(): Promise<void> {
@@ -134,7 +116,7 @@ export function usePaginatedScroll<T>(
   function readGeometry(): ScrollGeometry | null {
     const el = container.value
     if (!el) return null
-    return { scrollTop: el.scrollTop, scrollHeight: el.scrollHeight, clientHeight: el.clientHeight }
+    return { clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, scrollTop: el.scrollTop }
   }
 
   /** Measured boxes for the currently-mounted window items, in scroll coords. */
@@ -149,20 +131,20 @@ export function usePaginatedScroll<T>(
       if (!node) continue
       const r = node.getBoundingClientRect()
       const top = r.top - cRect.top + el.scrollTop
-      boxes.push({ key, top, bottom: top + r.height })
+      boxes.push({ bottom: top + r.height, key, top })
     }
-    return { boxes, view: { top: el.scrollTop, bottom: el.scrollTop + el.clientHeight } }
+    return { boxes, view: { bottom: el.scrollTop + el.clientHeight, top: el.scrollTop } }
   }
 
   function windowHeightPx(boxes: ItemBox[]): number {
     if (boxes.length === 0) return 0
-    return boxes[boxes.length - 1]!.bottom - boxes[0]!.top
+    return boxes.at(-1)!.bottom - boxes[0]!.top
   }
 
   function captureAnchor(): AnchorSnapshot | null {
     const m = measureWindow()
     if (!m || m.boxes.length === 0) return null
-    const anchor = m.boxes.find((b) => b.bottom > m.view.top) ?? m.boxes[0]!
+    const anchor = m.boxes.find(b => b.bottom > m.view.top) ?? m.boxes[0]!
     return { key: anchor.key, viewportOffset: anchor.top - m.view.top }
   }
 
@@ -262,7 +244,7 @@ export function usePaginatedScroll<T>(
 
         const idx = side === 'bottom' ? e : s
         const key = getKey(items[idx]!)
-        const box = boxes.find((bx) => bx.key === key)
+        const box = boxes.find(bx => bx.key === key)
         if (!box) break
         if (!isSafeToTrim(side, box, view, bufferPx)) break
 
@@ -418,12 +400,12 @@ export function usePaginatedScroll<T>(
       if (dist > triggerPx * 1.5) latchReleased[dir] = true
 
       const info = resolveTrigger({
+        directionActive: scrollDir === dir,
         distanceToEdge: dist,
-        triggerPx,
         hasMore: hasMoreFor(dir) || hasBufferedOverflow(dir),
         latchReleased: latchReleased[dir],
-        directionActive: scrollDir === dir,
         paginating: isPaginating.value[dir] || filling[dir],
+        triggerPx,
       })
       if (info.shouldFire) {
         latchReleased[dir] = false
@@ -452,8 +434,7 @@ export function usePaginatedScroll<T>(
   function updateLiveEdgeFlag(): void {
     const g = readGeometry()
     if (!g) return
-    isAtLiveEdge.value =
-      isScrolledToForwardEnd(g) && !hasMoreFor('forward') && !hasBufferedOverflow('forward')
+    isAtLiveEdge.value = isScrolledToForwardEnd(g) && !hasMoreFor('forward') && !hasBufferedOverflow('forward')
   }
 
   // Watch for unsolicited source growth (items arriving on their own).
@@ -484,8 +465,8 @@ export function usePaginatedScroll<T>(
     const items = sourceItems.value
     if (items.length === 0) return
     if (direction === 'forward') {
-      endKey.value = getKey(items[items.length - 1]!)
-      startKey.value = getKey(items[items.length - 1]!)
+      endKey.value = getKey(items.at(-1)!)
+      startKey.value = getKey(items.at(-1)!)
     } else {
       startKey.value = getKey(items[0]!)
       endKey.value = getKey(items[0]!)
@@ -515,7 +496,7 @@ export function usePaginatedScroll<T>(
     // Mount the whole seeded range (capped by maxItems), pin to the edge, then
     // trim to targetHeight against real measured heights.
     startKey.value = getKey(items[0]!)
-    endKey.value = getKey(items[items.length - 1]!)
+    endKey.value = getKey(items.at(-1)!)
     growToEdge(initialEdge)
     await nextTick()
 
@@ -558,11 +539,8 @@ export function usePaginatedScroll<T>(
     const triggerPx = px(cfg.triggerDistance())
     const m = measureWindow()
     debugState.value = {
-      bufferPx: px(cfg.buffer()),
-      viewportHeight: currentViewportPx(),
-      windowHeight: m ? Math.round(windowHeightPx(m.boxes)) : 0,
-      windowCount: window.value.length,
       anchorKey: captureAnchor()?.key ?? null,
+      bufferPx: px(cfg.buffer()),
       isAtLiveEdge: isAtLiveEdge.value,
       lastRenderMs: debugState.value?.lastRenderMs ?? null,
       triggers: {
@@ -583,6 +561,9 @@ export function usePaginatedScroll<T>(
           paginating: isPaginating.value.forward || filling.forward,
         }),
       },
+      viewportHeight: currentViewportPx(),
+      windowCount: window.value.length,
+      windowHeight: m ? Math.round(windowHeightPx(m.boxes)) : 0,
     }
   }
 
@@ -596,7 +577,7 @@ export function usePaginatedScroll<T>(
   // Re-bootstrap if the source arrives after mount (async seed).
   const stopSeedWatch = watch(
     () => sourceItems.value.length,
-    async (len) => {
+    async len => {
       if (len > 0 && startKey.value === null && endKey.value === null) {
         await bootstrap()
         stopSeedWatch()
@@ -609,11 +590,11 @@ export function usePaginatedScroll<T>(
   })
 
   return {
-    window,
+    debugState,
     isAtLiveEdge,
     isPaginating,
-    vItem,
     scrollToEdge,
-    debugState,
+    vItem,
+    window,
   }
 }

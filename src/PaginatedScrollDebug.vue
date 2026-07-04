@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+
 import type { DebugState } from './types'
 
 const props = defineProps<{
@@ -45,8 +46,7 @@ const forward = computed(() => props.state?.triggers.forward)
       }"
     >
       <span class="pgs-debug__label">
-        ▼ forward · {{ forward.armed ? 'armed' : forward.disarmedReason }} ·
-        {{ Math.round(forward.distanceToEdge) }}px
+        ▼ forward · {{ forward.armed ? 'armed' : forward.disarmedReason }} · {{ Math.round(forward.distanceToEdge) }}px
       </span>
     </div>
 
@@ -89,8 +89,12 @@ const forward = computed(() => props.state?.triggers.forward)
   animation: pgs-pulse 0.4s ease;
 }
 @keyframes pgs-pulse {
-  0% { filter: brightness(1.6); }
-  100% { filter: brightness(1); }
+  0% {
+    filter: brightness(1.6);
+  }
+  100% {
+    filter: brightness(1);
+  }
 }
 .pgs-debug__label {
   position: absolute;
@@ -101,8 +105,12 @@ const forward = computed(() => props.state?.triggers.forward)
   border-radius: 3px;
   white-space: nowrap;
 }
-.pgs-debug__band--top .pgs-debug__label { top: 4px; }
-.pgs-debug__band--bottom .pgs-debug__label { bottom: 4px; }
+.pgs-debug__band--top .pgs-debug__label {
+  top: 4px;
+}
+.pgs-debug__band--bottom .pgs-debug__label {
+  bottom: 4px;
+}
 .pgs-debug__hud {
   position: absolute;
   top: 8px;

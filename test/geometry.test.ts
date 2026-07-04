@@ -1,35 +1,36 @@
 import { describe, it, expect } from 'vitest'
+
 import { distanceToEdge, isSafeToTrim, resolveTrigger, isScrolledToForwardEnd } from '../src/geometry'
 
 describe('distanceToEdge', () => {
   it('backward distance is scrollTop', () => {
-    expect(distanceToEdge({ scrollTop: 120, scrollHeight: 1000, clientHeight: 400 }, 'backward')).toBe(120)
+    expect(distanceToEdge({ clientHeight: 400, scrollHeight: 1000, scrollTop: 120 }, 'backward')).toBe(120)
   })
   it('forward distance is remaining scroll', () => {
-    expect(distanceToEdge({ scrollTop: 120, scrollHeight: 1000, clientHeight: 400 }, 'forward')).toBe(480)
+    expect(distanceToEdge({ clientHeight: 400, scrollHeight: 1000, scrollTop: 120 }, 'forward')).toBe(480)
   })
   it('never returns negative forward distance (overscroll)', () => {
-    expect(distanceToEdge({ scrollTop: 700, scrollHeight: 1000, clientHeight: 400 }, 'forward')).toBe(0)
+    expect(distanceToEdge({ clientHeight: 400, scrollHeight: 1000, scrollTop: 700 }, 'forward')).toBe(0)
   })
 })
 
 describe('isScrolledToForwardEnd', () => {
   it('true at the bottom within epsilon', () => {
-    expect(isScrolledToForwardEnd({ scrollTop: 599, scrollHeight: 1000, clientHeight: 400 })).toBe(true)
+    expect(isScrolledToForwardEnd({ clientHeight: 400, scrollHeight: 1000, scrollTop: 599 })).toBe(true)
   })
   it('false when scrolled up', () => {
-    expect(isScrolledToForwardEnd({ scrollTop: 100, scrollHeight: 1000, clientHeight: 400 })).toBe(false)
+    expect(isScrolledToForwardEnd({ clientHeight: 400, scrollHeight: 1000, scrollTop: 100 })).toBe(false)
   })
 })
 
 describe('resolveTrigger — loop prevention layers (ADR-0002)', () => {
   const base = {
+    directionActive: true,
     distanceToEdge: 10,
-    triggerPx: 100,
     hasMore: true,
     latchReleased: true,
-    directionActive: true,
     paginating: false,
+    triggerPx: 100,
   }
 
   it('fires when armed and within the zone', () => {
@@ -70,30 +71,30 @@ describe('resolveTrigger — loop prevention layers (ADR-0002)', () => {
   })
 
   it('precedence: paginating reported before exhaustion', () => {
-    const r = resolveTrigger({ ...base, paginating: true, hasMore: false })
+    const r = resolveTrigger({ ...base, hasMore: false, paginating: true })
     expect(r.disarmedReason).toBe('paginating')
   })
 })
 
 describe('isSafeToTrim — "never trim viewport + buffer" invariant', () => {
-  const view = { top: 500, bottom: 900 }
+  const view = { bottom: 900, top: 500 }
   const bufferPx = 100
 
   it('bottom trim is safe only fully below the buffered viewport', () => {
     // item just below buffer edge (1000) -> safe
-    expect(isSafeToTrim('bottom', { top: 1000, bottom: 1080 }, view, bufferPx)).toBe(true)
+    expect(isSafeToTrim('bottom', { bottom: 1080, top: 1000 }, view, bufferPx)).toBe(true)
     // item intersecting the buffer zone -> unsafe
-    expect(isSafeToTrim('bottom', { top: 950, bottom: 1030 }, view, bufferPx)).toBe(false)
+    expect(isSafeToTrim('bottom', { bottom: 1030, top: 950 }, view, bufferPx)).toBe(false)
     // item inside viewport -> unsafe (protects the read position)
-    expect(isSafeToTrim('bottom', { top: 600, bottom: 700 }, view, bufferPx)).toBe(false)
+    expect(isSafeToTrim('bottom', { bottom: 700, top: 600 }, view, bufferPx)).toBe(false)
   })
 
   it('top trim is safe only fully above the buffered viewport', () => {
     // item above buffer edge (400) -> safe
-    expect(isSafeToTrim('top', { top: 300, bottom: 400 }, view, bufferPx)).toBe(true)
+    expect(isSafeToTrim('top', { bottom: 400, top: 300 }, view, bufferPx)).toBe(true)
     // item intersecting the buffer zone -> unsafe
-    expect(isSafeToTrim('top', { top: 380, bottom: 460 }, view, bufferPx)).toBe(false)
+    expect(isSafeToTrim('top', { bottom: 460, top: 380 }, view, bufferPx)).toBe(false)
     // giant item spanning the whole viewport -> never trimmable
-    expect(isSafeToTrim('top', { top: 0, bottom: 2000 }, view, bufferPx)).toBe(false)
+    expect(isSafeToTrim('top', { bottom: 2000, top: 0 }, view, bufferPx)).toBe(false)
   })
 })

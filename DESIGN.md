@@ -13,7 +13,7 @@ Terminology is defined in [CONTEXT.md](./CONTEXT.md). Hard decisions are in [doc
 
 Two refs, cleanly separated:
 
-- **`source`** — the full backing array. The **consumer owns and mutates it**, but *only* from inside
+- **`source`** — the full backing array. The **consumer owns and mutates it**, but _only_ from inside
   their own fetch code (`onBeforePaginate`). The library **never writes to it**.
 - **`window`** — a derived, bounded ref the composable **returns**. A contiguous slice over `source`;
   this is what the template renders. "Trimming" is not deletion — it narrows the window's boundaries.
@@ -21,11 +21,11 @@ Two refs, cleanly separated:
 The consumer renders `window`, never `source`. Rendering `source` directly would defeat the purpose
 (it'd mount everything).
 
-## 2. Windowing, not virtualization  ([ADR-0001](./docs/adr/0001-bounded-dom-windowing-not-virtualization.md))
+## 2. Windowing, not virtualization ([ADR-0001](./docs/adr/0001-bounded-dom-windowing-not-virtualization.md))
 
 Every item in the window is **real, mounted DOM**. No height estimation, no spacers, no recycling —
 because item heights are wildly unpredictable (a one-line "hi" vs. a giant rules message) and can't be
-known without mounting. The window stays bounded by a **target height**; the *source* behind it can be
+known without mounting. The window stays bounded by a **target height**; the _source_ behind it can be
 unbounded. Trade-off: the window caps at hundreds–low-thousands of mounted rows, and heavy rows × tall
 window = real mount cost — which is precisely what the perf warning surfaces (§9).
 
@@ -35,19 +35,19 @@ The container's height is watched reactively (`ResizeObserver`/`useElementSize`)
 resize and across devices. Knobs, all expressed as multiples of viewport height:
 
 - **`targetHeight`** (~3×) — the height the window tries to stay near.
-- **`buffer`** (~0.3×) — runway kept on the *opposite* side of scroll after a trim. Two jobs: keep the
+- **`buffer`** (~0.3×) — runway kept on the _opposite_ side of scroll after a trim. Two jobs: keep the
   trimmed edge away from its trigger (loop safety), and give reaction runway on direction reversal.
 - **`triggerDistance`** (~0.5×) — how close to an edge fires a pagination.
 
 **Height is primary, clamped by one count ceiling and one trim invariant:**
 
-- **`maxItems`** (~250, tunable) — a hard ceiling on mounted rows. Protects against the *tiny-items,
-  tall-target* pathology (e.g. ~140 one-liners to fill a 4200px target × heavier config = hundreds of
-  nodes), which pixel-based governance can't catch. When hit, the window stops *below* `targetHeight` —
+- **`maxItems`** (~250, tunable) — a hard ceiling on mounted rows. Protects against the _tiny-items,
+  tall-target_ pathology (e.g. ~140 one-liners to fill a 4200px target × heavier config = hundreds of
+  nodes), which pixel-based governance can't catch. When hit, the window stops _below_ `targetHeight` —
   node safety wins.
 - **Trim invariant: never trim an item intersecting viewport + buffer.** This is a dynamic, pixel-derived
-  floor that handles the *one-giant-item* pathology (a single message taller than the whole target) —
-  it guarantees the item the user is reading is never trimmed and that runway always exists, *without* a
+  floor that handles the _one-giant-item_ pathology (a single message taller than the whole target) —
+  it guarantees the item the user is reading is never trimmed and that runway always exists, _without_ a
   static `minItems` knob (deliberately omitted — it'd be a worse version of this invariant). If `maxItems`
   is set so low it can't cover viewport + buffer, that's a misconfiguration surfaced via `debug`.
 
@@ -61,10 +61,10 @@ resize and across devices. Knobs, all expressed as multiples of viewport height:
 5. **Restore anchor** — set `scrollTop` so the anchor element is visually exactly where it was.
    Runs post-flush, before paint — no visible intermediate frame.
 
-The recompute is **declarative and idempotent**: the library never diffs `source` to learn *what*
+The recompute is **declarative and idempotent**: the library never diffs `source` to learn _what_
 changed, only recomputes from current state. Running it twice is harmless.
 
-## 5. Loop prevention — defense in depth  ([ADR-0002](./docs/adr/0002-layered-loop-prevention.md))
+## 5. Loop prevention — defense in depth ([ADR-0002](./docs/adr/0002-layered-loop-prevention.md))
 
 The defining failure mode is the **pagination loop** (a trim re-arms the opposite trigger → infinite
 paginate). Prevented by three cooperating layers so no single failure breaks it:
@@ -76,13 +76,13 @@ paginate). Prevented by three cooperating layers so no single failure breaks it:
 The trigger itself is **pure scroll-position math** (a continuous distance-to-edge scalar), not a DOM
 sentinel — latching/gating are far easier to reason about against a scalar than binary visibility events.
 
-## 6. Scroll preservation  ([ADR-0003](./docs/adr/0003-anchor-element-primary-overflow-anchor-supplemental.md))
+## 6. Scroll preservation ([ADR-0003](./docs/adr/0003-anchor-element-primary-overflow-anchor-supplemental.md))
 
 - **Anchor-element compensation is the universal primary.** Pin a visible landmark element across the
   grow+trim; correctness is independent of how much was added/removed. Works identically on every browser.
 - **`overflow-anchor` is supplemental only.** It's unsupported on all Safari through v26 (~79% global,
   the missing ~21% is WebKit/iOS — a primary chat target), so it can't anchor our paginations. It earns
-  its keep only for *incidental* reflows *between* paginations (a late image loading above the fold).
+  its keep only for _incidental_ reflows _between_ paginations (a late image loading above the fold).
 - During the anchor restore, the library asserts `overflow-anchor: none` so the browser can't
   double-correct and fight the manual `scrollTop` set.
 
@@ -103,20 +103,21 @@ and says nothing about history behind a token/gap) — only the consumer's data 
 direction reads `false` its trigger is disarmed; if it flips back (gap backfilled, live edge advanced) the
 trigger re-arms. Omitted → `() => true`.
 
-## 9. Live behaviors — feature-rich but opt-in  ([ADR-0004](./docs/adr/0004-source-watching-and-mid-window-mutations.md))
+## 9. Live behaviors — feature-rich but opt-in ([ADR-0004](./docs/adr/0004-source-watching-and-mid-window-mutations.md))
 
 The core is a pure pagination/windowing engine; live behaviors are layered features nobody pays for
-unless enabled. To support them the library **watches `source`** to know *that* it changed (recompute
+unless enabled. To support them the library **watches `source`** to know _that_ it changed (recompute
 now) — but still never diffs deltas.
 
-- **`followTail`** (opt-in) — when new items arrive *and* the user is at the live edge, re-pin to bottom;
+- **`followTail`** (opt-in) — when new items arrive _and_ the user is at the live edge, re-pin to bottom;
   if they've scrolled up, arriving items must never yank them down.
 - **`isAtLiveEdge`** (reactive) — drives a jump-to-latest pill.
 - **`scrollToEdge(direction)`** — programmatic jump (may paginate forward to reach the live edge).
 
 Two dispatch paths, deliberately different:
-- *Pagination* is **bracketed** (needs a "before" measurement, §4).
-- *Unsolicited growth/mutation* is **watch-driven** (source changed → recompute → apply follow policy).
+
+- _Pagination_ is **bracketed** (needs a "before" measurement, §4).
+- _Unsolicited growth/mutation_ is **watch-driven** (source changed → recompute → apply follow policy).
 
 **Mid-window mutations** (edits, redactions, optimistic echoes): core does **recompute only** (a redaction
 drops the item; an edit re-renders) — no deterministic height-anchoring, those get `overflow-anchor` for
@@ -126,7 +127,7 @@ sub-frame — it fires only on actual resize, batched before paint); the gate is
 
 ## 10. Dev experience
 
-- **Render-latency warning** — times only the **render clock** (recompute → rows painted), *excluding*
+- **Render-latency warning** — times only the **render clock** (recompute → rows painted), _excluding_
   the fetch (consumer owns fetching, library owns rendering). Over `slowPaginationMs` (~50ms default) it
   emits an actionable `console.warn`: direction, elapsed vs threshold, items mounted, height added, and
   **per-item average** so you know whether to lower `targetHeight` (too many) or lighten the row (too
@@ -195,5 +196,5 @@ library, no `IntersectionObserver` abstraction.
 2. **`isPaginating` shape** — single boolean, per-direction, or a richer status enum.
 3. **Naming pass** on all public options/returns before first release.
 
-*(Resolved: item-count governance — `maxItems` ceiling + a "never trim viewport+buffer" invariant;
-no `minItems`. See §3.)*
+_(Resolved: item-count governance — `maxItems` ceiling + a "never trim viewport+buffer" invariant;
+no `minItems`. See §3.)_
