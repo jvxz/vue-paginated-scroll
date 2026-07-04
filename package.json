@@ -1,5 +1,5 @@
 {
-  "name": "@jvxz/vue-paginated-scroll",
+  "name": "@jamii/vue-paginated-scroll",
   "version": "1.0.0",
   "description": "Headless Vue composable for stable, bidirectional paginated scrolling",
   "keywords": [
