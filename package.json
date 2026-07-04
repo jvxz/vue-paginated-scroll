@@ -1,13 +1,12 @@
 {
-  "name": "vue-paginated-scroll",
-  "version": "0.0.0",
+  "name": "@jvxz/vue-paginated-scroll",
+  "version": "1.0.0",
   "description": "Headless Vue composable for stable, bidirectional paginated scrolling",
   "keywords": [
     "chat",
     "composable",
     "headless",
     "infinite-scroll",
-    "matrix",
     "pagination",
     "scroll",
     "timeline",
