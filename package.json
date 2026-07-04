@@ -1,0 +1,57 @@
+{
+  "name": "vue-paginated-scroll",
+  "version": "0.0.0",
+  "description": "Headless Vue composable for stable, bidirectional paginated scrolling (Discord/Slack/Matrix-style message lists).",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "vue",
+    "composable",
+    "pagination",
+    "infinite-scroll",
+    "scroll",
+    "chat",
+    "timeline",
+    "matrix",
+    "headless"
+  ],
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "vite build && vue-tsc --declaration --emitDeclarationOnly -p tsconfig.build.json",
+    "dev": "vite build --watch",
+    "dev:playground": "vite --config playground/vite.config.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0"
+  },
+  "dependencies": {
+    "@vueuse/core": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@vitejs/plugin-vue": "^5.1.0",
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^15.0.0",
+    "typescript": "^5.6.0",
+    "vite": "^5.4.0",
+    "vitest": "^2.1.0",
+    "vue": "^3.5.0",
+    "vue-tsc": "^2.1.0"
+  }
+}
