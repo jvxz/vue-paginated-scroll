@@ -39,6 +39,7 @@
     "dev:playground": "vite --config playground/vite.config.ts",
     "format": "oxfmt",
     "lint": "oxlint",
+    "prepublishOnly": "pnpm build",
     "release": "bumpp && changelogen --release --push && npm publish --access public",
     "test": "vitest run",
     "test:watch": "vitest",
