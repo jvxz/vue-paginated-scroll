@@ -139,7 +139,8 @@ describe('usePaginatedScroll — trim tuning', () => {
 
     function currentHeight(): number {
       const firstRect = (container.children[0] as HTMLElement)?.getBoundingClientRect()
-      const lastRect = (container.children.at(-1) as HTMLElement)?.getBoundingClientRect()
+      // eslint-disable-next-line e18e/prefer-array-at -- happy-dom's HTMLCollection has no .at()
+      const lastRect = (container.children[container.children.length - 1] as HTMLElement)?.getBoundingClientRect()
       if (!firstRect || !lastRect) return 0
       return lastRect.bottom - firstRect.top
     }
@@ -559,5 +560,92 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
     await new Promise(r => setTimeout(r, 2000))
 
     expect(backwardFetchCount).toBeGreaterThan(3)
+  })
+})
+
+describe('usePaginatedScroll — pagination-direction runway preservation', () => {
+  it('keeps most of a freshly-fetched page as backward runway instead of trimming it back off when the stale forward side has little to give', async () => {
+    // A large single fetch page (200 items), like a real chat history page —
+    // much bigger than the forward (stale) side's safely-trimmable slack,
+    // which was already squeezed down to near targetHeight by the initial
+    // bootstrap trim. This is exactly the shape that made trimWindow's
+    // stale-side-first trim fall short and fall back to clawing the growth
+    // it had just made straight back off (see ADR trimWindow comment).
+    const LIVE_EDGE = 5999
+    const SEED = 40
+    const PAGE_SIZE = 200
+    const ALL_IDS = Array.from({ length: LIVE_EDGE + 1 }, (_, i) => i)
+
+    const source = shallowRef(ALL_IDS.slice(LIVE_EDGE - SEED + 1, LIVE_EDGE + 1))
+    const canOlder = ref(true)
+    const scrollTopRef = { value: 0 }
+
+    const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
+      setup() {
+        const container = ref<HTMLElement | null>(null)
+        const api = usePaginatedScroll(container, {
+          source,
+          getKey: (id: number) => id,
+          onBeforePaginate: async dir => {
+            if (dir !== 'backward') return
+            const first = source.value[0]!
+            const start = Math.max(0, first - PAGE_SIZE)
+            if (start === first) {
+              canOlder.value = false
+              return
+            }
+            source.value = [...ALL_IDS.slice(start, first), ...source.value]
+            canOlder.value = start > 0
+          },
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
+          targetHeight: TARGET_MULTIPLE,
+          buffer: 0.3,
+          triggerDistance: 0.5,
+          maxItems: 600,
+          initialEdge: 'forward',
+        })
+        return { container, ...api }
+      },
+    })
+
+    const wrapper = mount(Comp, { attachTo: document.body })
+    const container = wrapper.vm.container as HTMLElement
+    installLayoutStub(container, scrollTopRef)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill (pins forward)
+
+    // Drive repeated backward triggers, drifting a modest distance away
+    // between rounds to re-arm the backward latch — but staying well clear
+    // of the *forward* trigger zone, so only backward pagination ever fires.
+    // The first couple of rounds just drain the small backward
+    // buffered-overflow left over from the bootstrap trim; once that's
+    // exhausted, later rounds hit the real-fetch path with the full 200-item
+    // page.
+    const runwayAfterSettle: number[] = []
+    for (let round = 0; round < 10; round++) {
+      scrollTopRef.value = 0
+      container.dispatchEvent(new Event('scroll'))
+      await new Promise(r => setTimeout(r, 250))
+      runwayAfterSettle.push(container.scrollTop)
+      scrollTopRef.value = 900 // re-arms the backward latch, stays short of the forward zone
+      container.dispatchEvent(new Event('scroll'))
+      await new Promise(r => setTimeout(r, 50))
+    }
+
+    // Once the real-fetch path is reached (a 200-item page), the runway a
+    // single pagination buys should stay a healthy multiple of the trigger
+    // threshold (triggerPx = 0.5 * VIEWPORT = 400px) — not get clawed back
+    // down to a sliver just past the buffer on every round. Before the fix
+    // this collapsed toward the buffer floor because the stale (forward) side
+    // rarely had enough safely-trimmable slack, so the fallback ate most of
+    // the fresh page right back off.
+    const settledRunway = runwayAfterSettle.at(-1)!
+    expect(settledRunway).toBeGreaterThan(8000)
   })
 })

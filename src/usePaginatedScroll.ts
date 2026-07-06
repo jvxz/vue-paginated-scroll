@@ -218,8 +218,13 @@ export function usePaginatedScroll<T>(
 
   /**
    * Trim both edges down toward targetHeight. `dir`, when known, is the edge
-   * that was just grown — trim the stale opposite side first so a long
-   * same-direction streak doesn't starve the side the user is scrolling into.
+   * that was just grown — trim the stale opposite side first, and only let it
+   * chase the soft targetHeight budget. The just-grown side is trimmed only
+   * to enforce the hard maxItems cap: targetHeight is an aspiration satisfied
+   * opportunistically from stale content, never by clawing back the runway a
+   * pagination just bought (that would starve the direction the user is
+   * actively scrolling into on every single pagination, not just long streaks).
+   * maxItems remains the one hard invariant, enforced from either side.
    */
   function trimWindow(dir?: Direction): void {
     const maxItems = cfg.maxItems()
@@ -235,10 +240,11 @@ export function usePaginatedScroll<T>(
     const bufferPx = px(cfg.buffer())
 
     // Walk inward from `side`, dropping items that are both over-budget and
-    // safe to remove (fully outside viewport + buffer).
-    function trimSide(side: 'top' | 'bottom'): void {
+    // safe to remove (fully outside viewport + buffer). `allowTargetTrim`
+    // gates the soft targetHeight budget; the hard maxItems cap always applies.
+    function trimSide(side: 'top' | 'bottom', allowTargetTrim: boolean): void {
       while (e - s + 1 > 1) {
-        const overTarget = height > targetPx
+        const overTarget = allowTargetTrim && height > targetPx
         const overMax = e - s + 1 > maxItems
         if (!overTarget && !overMax) break
 
@@ -255,11 +261,11 @@ export function usePaginatedScroll<T>(
     }
 
     if (dir === 'forward') {
-      trimSide('top')
-      trimSide('bottom')
+      trimSide('top', true)
+      trimSide('bottom', false)
     } else {
-      trimSide('bottom')
-      trimSide('top')
+      trimSide('bottom', true)
+      trimSide('top', false)
     }
 
     startKey.value = getKey(items[s]!)
