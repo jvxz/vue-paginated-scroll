@@ -564,7 +564,7 @@ describe('usePaginatedScroll — scroll-trigger self-chaining', () => {
 })
 
 describe('usePaginatedScroll — pagination-direction runway preservation', () => {
-  it('keeps most of a freshly-fetched page as backward runway instead of trimming it back off when the stale forward side has little to give', async () => {
+  it('keeps a healthy runway across repeated backward triggers instead of collapsing to a sliver, without dumping a whole fetched page in one shot', async () => {
     // A large single fetch page (200 items), like a real chat history page —
     // much bigger than the forward (stale) side's safely-trimmable slack,
     // which was already squeezed down to near targetHeight by the initial
@@ -638,14 +638,87 @@ describe('usePaginatedScroll — pagination-direction runway preservation', () =
       await new Promise(r => setTimeout(r, 50))
     }
 
-    // Once the real-fetch path is reached (a 200-item page), the runway a
-    // single pagination buys should stay a healthy multiple of the trigger
-    // threshold (triggerPx = 0.5 * VIEWPORT = 400px) — not get clawed back
-    // down to a sliver just past the buffer on every round. Before the fix
-    // this collapsed toward the buffer floor because the stale (forward) side
-    // rarely had enough safely-trimmable slack, so the fallback ate most of
-    // the fresh page right back off.
+    // Once the real-fetch path is reached (a 200-item page), each round only
+    // reveals enough to clear the trigger threshold (triggerPx = 0.5 *
+    // VIEWPORT = 400px) — not the whole fetched page in one shot, which would
+    // mount 200 heavy rows synchronously and block the main thread. So the
+    // settled runway should stay a healthy multiple of the trigger threshold
+    // (not collapse to a sliver just past the buffer, the original bug this
+    // test guarded against) while also staying well short of a whole-page
+    // dump (confirming the bounded-reveal fix, not a regression back to it).
     const settledRunway = runwayAfterSettle.at(-1)!
-    expect(settledRunway).toBeGreaterThan(8000)
+    expect(settledRunway).toBeGreaterThan(800)
+    expect(settledRunway).toBeLessThan(4000)
+  })
+})
+
+describe('usePaginatedScroll — buffered-overflow growth never shrinks back (no fetch, no anchor shift)', () => {
+  it('does not let the window balloon toward maxItems during a long continuous forward scroll through already-buffered content', async () => {
+    // Everything is pre-fetched up front (hasMore always false both ways) —
+    // mirrors a Matrix live timeline that already holds thousands of events
+    // client-side, so "forward" pagination only ever reveals buffered
+    // overflow via growToEdgeBounded, never a real fetch via growToEdge.
+    const TOTAL = 4000
+    const ALL_IDS = Array.from({ length: TOTAL }, (_, i) => i)
+    const source = shallowRef(ALL_IDS)
+    const scrollTopRef = { value: 0 }
+
+    const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': heightFor(id) }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
+      setup() {
+        const container = ref<HTMLElement | null>(null)
+        const api = usePaginatedScroll(container, {
+          source,
+          getKey: (id: number) => id,
+          onBeforePaginate: async () => {},
+          hasMore: () => false,
+          targetHeight: TARGET_MULTIPLE,
+          buffer: 0.3,
+          triggerDistance: 0.5,
+          maxItems: 250,
+          initialEdge: 'backward',
+        })
+        return { container, ...api }
+      },
+    })
+
+    const wrapper = mount(Comp, { attachTo: document.body })
+    const container = wrapper.vm.container as HTMLElement
+    installLayoutStub(container, scrollTopRef)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill (pins backward)
+
+    // Continuous forward scroll, like a real browser drag — small steps so
+    // the trigger zone is re-entered repeatedly without ever needing a real
+    // fetch (everything past the window is already in `source`).
+    const windowLengths: number[] = []
+    for (let tick = 0; tick < 120; tick++) {
+      const ceiling = Math.max(0, container.scrollHeight - container.clientHeight)
+      if (scrollTopRef.value >= ceiling) break
+      scrollTopRef.value = Math.min(ceiling, scrollTopRef.value + 150)
+      container.dispatchEvent(new Event('scroll'))
+      await new Promise(r => setTimeout(r, 20))
+      for (let settle = 0; settle < 20 && wrapper.vm.isPaginating.forward; settle++) {
+        await nextTick()
+      }
+      await nextTick()
+      windowLengths.push(wrapper.vm.window.length)
+    }
+
+    // If growToEdgeBounded's growth is never given back on the fresh
+    // (forward) side while the stale (backward) side has no equivalent
+    // conveyor-belt effect (appending doesn't shift the anchor the way
+    // prepending does), the window should climb toward maxItems instead of
+    // settling near a small multiple of targetHeight.
+    const peak = Math.max(...windowLengths)
+    const last = windowLengths.at(-1)!
+    // eslint-disable-next-line no-console
+    console.log(`peak window.length=${peak}, last=${last}, samples=${windowLengths.join(',')}`)
+    expect(peak).toBeLessThan(60)
   })
 })

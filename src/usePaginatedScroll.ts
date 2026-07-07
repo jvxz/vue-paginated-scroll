@@ -283,7 +283,6 @@ export function usePaginatedScroll<T>(
     setNativeAnchoring(false)
     try {
       const anchor = captureAnchor()
-      const lenBefore = sourceItems.value.length
 
       // Buffered overflow just needs revealing — no fetch to wait on.
       if (!bufferedOverflow) {
@@ -294,20 +293,22 @@ export function usePaginatedScroll<T>(
       // Render clock starts once fetch has resolved and we begin mounting.
       const renderStart = debug ? performance.now() : 0
 
-      if (bufferedOverflow) {
-        // Grow by just enough to cover the needed runway, estimated from the
-        // window's average row height (fillToTarget retries if it's not enough).
-        let addCount = growHint
-        if (addCount === undefined) {
-          const need = px(cfg.triggerDistance()) + px(cfg.buffer())
-          const m = measureWindow()
-          const avgH = m && m.boxes.length > 0 ? windowHeightPx(m.boxes) / m.boxes.length : 48
-          addCount = Math.max(1, Math.ceil(need / avgH))
-        }
-        growToEdgeBounded(dir, addCount)
-      } else {
-        growToEdge(dir)
+      // Grow by just enough to cover the needed runway, estimated from the
+      // window's average row height (fillToTarget retries if it's not enough).
+      // This applies even right after a real fetch: mounting everything a
+      // fetch added in one synchronous batch (it can add far more than one
+      // screenful) blocks the main thread for the whole mount+measure+trim
+      // cycle — a visible freeze. Revealing only what's needed keeps each
+      // mount cheap; any remainder is now buffered overflow and surfaces
+      // through further cheap reveals as the user keeps scrolling.
+      let addCount = growHint
+      if (addCount === undefined) {
+        const need = px(cfg.triggerDistance()) + px(cfg.buffer())
+        const m = measureWindow()
+        const avgH = m && m.boxes.length > 0 ? windowHeightPx(m.boxes) / m.boxes.length : 48
+        addCount = Math.max(1, Math.ceil(need / avgH))
       }
+      growToEdgeBounded(dir, addCount)
       await nextTick()
 
       // Restore the anchor before trimming, so trim's viewport+buffer check
@@ -320,10 +321,7 @@ export function usePaginatedScroll<T>(
       // Reassert in case a top-edge trim shifted content above the viewport.
       restoreAnchor(anchor)
 
-      if (debug) {
-        const added = sourceItems.value.length - lenBefore
-        recordRenderLatency(dir, performance.now() - renderStart, added)
-      }
+      if (debug) recordRenderLatency(dir, performance.now() - renderStart, addCount)
     } finally {
       setNativeAnchoring(true)
       isPaginating.value = { ...isPaginating.value, [dir]: false }
@@ -337,7 +335,6 @@ export function usePaginatedScroll<T>(
    * infinite loops when a fetch adds nothing.
    */
   async function fillToTarget(dir: Direction): Promise<void> {
-    const maxItems = cfg.maxItems()
     let guard = 0
     // Doubles when a buffered-overflow increment was too small to survive
     // trimWindow; resets once an attempt sticks.
@@ -348,7 +345,6 @@ export function usePaginatedScroll<T>(
       const need = px(cfg.triggerDistance()) + px(cfg.buffer())
       if (distanceToEdge(g, dir) > need) return
       if (!hasMoreFor(dir) && !hasBufferedOverflow(dir)) return
-      if (window.value.length >= maxItems) return
 
       // Track the window, not the source: a buffered-overflow reveal grows the
       // window without the source growing.
