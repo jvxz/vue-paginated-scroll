@@ -1,6 +1,10 @@
 # Changelog
 
 
+## v1.0.8
+
+[compare changes](https://github.com/jvxz/vue-paginated-scroll/compare/v1.0.7...v1.0.8)
+
 ## v1.0.6
 
 [compare changes](https://github.com/jvxz/vue-paginated-scroll/compare/v1.0.5...v1.0.6)
