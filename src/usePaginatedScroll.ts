@@ -282,13 +282,19 @@ export function usePaginatedScroll<T>(
     // Disable native scroll anchoring so it can't fight our manual restore (ADR-0003).
     setNativeAnchoring(false)
     try {
-      const anchor = captureAnchor()
-
       // Buffered overflow just needs revealing — no fetch to wait on.
       if (!bufferedOverflow) {
         await onBeforePaginate(dir)
         await nextTick()
       }
+
+      // Captured *after* any fetch, not before: a real fetch can take long
+      // enough for the user to keep scrolling while it's in flight, and the
+      // window's own content hasn't changed yet at this point (only `source`
+      // has grown) — so this still reflects the same on-screen landmark, just
+      // at the scroll position the user actually left it at, not a stale one
+      // from the moment the pagination was triggered.
+      const anchor = captureAnchor()
 
       // Render clock starts once fetch has resolved and we begin mounting.
       const renderStart = debug ? performance.now() : 0

@@ -722,3 +722,89 @@ describe('usePaginatedScroll — buffered-overflow growth never shrinks back (no
     expect(peak).toBeLessThan(60)
   })
 })
+
+describe('usePaginatedScroll — anchor stability across a slow (real-latency) async pagination', () => {
+  it('pins to the scroll position at fetch-resolve time, not the position at trigger time', async () => {
+    const LIVE_EDGE = 400
+    const SEED = 40
+    const ALL_IDS = Array.from({ length: LIVE_EDGE + 1 }, (_, i) => i)
+
+    const source = shallowRef(ALL_IDS.slice(LIVE_EDGE - SEED + 1, LIVE_EDGE + 1))
+    const canOlder = ref(true)
+    const scrollTopRef = { value: 0 }
+
+    const Comp = defineComponent({
+      render() {
+        const items: VNode[] = this.window.map((id: number) =>
+          withDirectives(h('div', { key: id, 'data-h': 48 }), [[this.vItem, id]]),
+        )
+        return h('div', { ref: 'container', style: `height:${VIEWPORT}px` }, items)
+      },
+      setup() {
+        const container = ref<HTMLElement | null>(null)
+        const api = usePaginatedScroll(container, {
+          source,
+          getKey: (id: number) => id,
+          onBeforePaginate: async dir => {
+            if (dir !== 'backward') return
+            // Real network-shaped latency — long enough for the user to keep
+            // scrolling during the wait, unlike the instant-resolving
+            // onBeforePaginate used by the other tests in this file.
+            await new Promise(r => setTimeout(r, 200))
+            const first = source.value[0]!
+            const start = Math.max(0, first - 30)
+            if (start === first) {
+              canOlder.value = false
+              return
+            }
+            source.value = [...ALL_IDS.slice(start, first), ...source.value]
+            canOlder.value = start > 0
+          },
+          hasMore: dir => (dir === 'backward' ? canOlder.value : false),
+          targetHeight: TARGET_MULTIPLE,
+          buffer: 0.3,
+          triggerDistance: 0.5,
+          maxItems: 250,
+          initialEdge: 'forward',
+        })
+        return { container, ...api }
+      },
+    })
+
+    const wrapper = mount(Comp, { attachTo: document.body })
+    const container = wrapper.vm.container as HTMLElement
+    installLayoutStub(container, scrollTopRef)
+    await nextTick()
+    await new Promise(r => setTimeout(r, 300)) // waitForStableViewport + bootstrap fill
+
+    // Trigger the backward fetch.
+    scrollTopRef.value = 50
+    container.dispatchEvent(new Event('scroll'))
+    await new Promise(r => setTimeout(r, 30)) // let onScrollFrame fire and kick off the fetch
+
+    // While the fetch is in flight, the user keeps scrolling further up —
+    // ordinary momentum/manual scroll, nothing the library should discard.
+    scrollTopRef.value = 10
+    container.dispatchEvent(new Event('scroll'))
+    await new Promise(r => setTimeout(r, 30)) // let onScrollFrame observe the new position
+
+    // Snapshot whichever item is now topmost and its on-screen position —
+    // this reflects the user's up-to-date scroll intent, not the stale
+    // position from when the fetch was first triggered.
+    const topBefore = [...container.children].find(
+      el => (el as HTMLElement).getBoundingClientRect().bottom > 0,
+    ) as HTMLElement
+    expect(topBefore).toBeTruthy()
+    const rectBefore = topBefore.getBoundingClientRect()
+
+    // Let the fetch resolve and the whole grow/restore/trim cycle settle.
+    await new Promise(r => setTimeout(r, 400))
+
+    const rectAfter = topBefore.getBoundingClientRect()
+
+    // The item the user was actually looking at right before the fetch
+    // resolved should still be in the same place on screen — not shifted by
+    // however far the user additionally scrolled during the wait.
+    expect(Math.abs(rectAfter.top - rectBefore.top)).toBeLessThan(2)
+  })
+})
