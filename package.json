@@ -1,6 +1,6 @@
 {
   "name": "@jamii/vue-paginated-scroll",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Headless Vue composable for stable, bidirectional paginated scrolling",
   "keywords": [
     "chat",
