@@ -4,7 +4,14 @@ import { useElementSize, useEventListener } from '@vueuse/core'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, toValue, watch } from 'vue'
 
 import type { ScrollGeometry } from './geometry'
-import type { Direction, ItemKey, PaginatedScroll, PaginatedScrollOptions, DebugState } from './types'
+import type {
+  DebugState,
+  Direction,
+  ItemKey,
+  PaginatedScroll,
+  PaginatedScrollOptions,
+  PaginatedScrollState,
+} from './types'
 
 import { distanceToEdge, isSafeToTrim, isScrolledToForwardEnd, resolveTrigger } from './geometry'
 import { ItemRegistry, createItemDirective } from './registry'
@@ -16,6 +23,8 @@ interface AnchorSnapshot {
   key: ItemKey
   /** Distance from the viewport top to the item's top, at capture time. */
   viewportOffset: number
+  /** Scroll coordinate used to preserve user motion while an async fetch waits. */
+  scrollTop: number
 }
 
 interface ItemBox {
@@ -65,7 +74,7 @@ export function usePaginatedScroll<T>(
 
   function boundIndices(): { s: number; e: number } | null {
     const items = sourceItems.value
-    if (items.length === 0) return null
+    if (items.length === 0 || startKey.value === null || endKey.value === null) return null
     const k2i = keyToIndex.value
     let s = startKey.value != null ? k2i.get(startKey.value) : undefined
     let e = endKey.value != null ? k2i.get(endKey.value) : undefined
@@ -87,6 +96,10 @@ export function usePaginatedScroll<T>(
   const isAtLiveEdge = ref(false)
   const isPaginating = ref<Record<Direction, boolean>>({ backward: false, forward: false })
   const debugState = ref<DebugState | null>(null)
+  let generation = 0
+  let transactionDepth = 0
+  let currentAnchor: AnchorSnapshot | null = null
+  let bootstrapInFlight: { edge: Direction; generation: number; promise: Promise<void> } | null = null
 
   // clientHeight is synchronous; viewportHeight lags a frame behind on first paint.
   const { height: viewportHeight } = useElementSize(container)
@@ -141,11 +154,36 @@ export function usePaginatedScroll<T>(
     return boxes.at(-1)!.bottom - boxes[0]!.top
   }
 
+  /**
+   * Distance from the viewport to the rendered item-window edge. Consumer
+   * chrome outside the registered rows (loading skeletons, headers, footers)
+   * deliberately does not contribute.
+   */
+  function distanceToItemEdge(direction: Direction): number {
+    const m = measureWindow()
+    if (!m || m.boxes.length === 0) {
+      const g = readGeometry()
+      return g ? distanceToEdge(g, direction) : Number.POSITIVE_INFINITY
+    }
+    return direction === 'backward'
+      ? Math.max(0, m.view.top - m.boxes[0]!.top)
+      : Math.max(0, m.boxes.at(-1)!.bottom - m.view.bottom)
+  }
+
   function captureAnchor(): AnchorSnapshot | null {
     const m = measureWindow()
     if (!m || m.boxes.length === 0) return null
-    const anchor = m.boxes.find(b => b.bottom > m.view.top) ?? m.boxes[0]!
-    return { key: anchor.key, viewportOffset: anchor.top - m.view.top }
+    const visible = m.boxes.filter(b => b.bottom > m.view.top && b.top < m.view.bottom)
+    if (visible.length === 0) return null
+    const fullyVisible = visible.filter(b => b.top >= m.view.top && b.bottom <= m.view.bottom)
+    const candidates = fullyVisible.length > 0 ? fullyVisible : visible
+    const viewportCenter = (m.view.top + m.view.bottom) / 2
+    const anchor = candidates.reduce((best, box) => {
+      const bestDistance = Math.abs((best.top + best.bottom) / 2 - viewportCenter)
+      const boxDistance = Math.abs((box.top + box.bottom) / 2 - viewportCenter)
+      return boxDistance < bestDistance ? box : best
+    })
+    return { key: anchor.key, scrollTop: m.view.top, viewportOffset: anchor.top - m.view.top }
   }
 
   function setNativeAnchoring(enabled: boolean): void {
@@ -153,15 +191,16 @@ export function usePaginatedScroll<T>(
     if (el) el.style.overflowAnchor = enabled ? '' : 'none'
   }
 
-  function restoreAnchor(snapshot: AnchorSnapshot | null): void {
+  function restoreAnchor(snapshot: AnchorSnapshot | null, viewportOffset = snapshot?.viewportOffset): void {
     const el = container.value
-    if (!el || !snapshot) return
+    if (!el || !snapshot || viewportOffset === undefined) return
     const node = registry.get(snapshot.key)
     if (!node) return
     const cRect = el.getBoundingClientRect()
     const r = node.getBoundingClientRect()
     const top = r.top - cRect.top + el.scrollTop
-    setScrollTop(top - snapshot.viewportOffset)
+    setScrollTop(top - viewportOffset)
+    currentAnchor = { key: snapshot.key, scrollTop: el.scrollTop, viewportOffset }
   }
 
   /**
@@ -272,29 +311,84 @@ export function usePaginatedScroll<T>(
     endKey.value = getKey(items[e]!)
   }
 
-  async function runPagination(dir: Direction, growHint?: number): Promise<void> {
-    if (isPaginating.value[dir]) return
+  /**
+   * Once content has been revealed, discard safely-offscreen stale rows until
+   * the browser scrollbar reaches the direction's opposite outer quarter.
+   * This is intentionally independent of the soft target-height budget.
+   */
+  async function rotateToLandingBand(
+    dir: Direction,
+    anchor: AnchorSnapshot | null,
+    intendedOffset: number | undefined,
+    expectedGeneration: number,
+  ): Promise<void> {
+    for (let guard = 0; guard < 4 && !hasReachedLandingBand(dir); guard++) {
+      const m = measureWindow()
+      const b = boundIndices()
+      if (!m || !b) return
+      const items = sourceItems.value
+      const bufferPx = px(cfg.buffer())
+      let { s, e } = b
+      let changed = false
+
+      if (dir === 'forward') {
+        while (s < e) {
+          const key = getKey(items[s]!)
+          const box = m.boxes.find(candidate => candidate.key === key)
+          if (!box || !isSafeToTrim('top', box, m.view, bufferPx)) break
+          s++
+          changed = true
+        }
+      } else {
+        while (s < e) {
+          const key = getKey(items[e]!)
+          const box = m.boxes.find(candidate => candidate.key === key)
+          if (!box || !isSafeToTrim('bottom', box, m.view, bufferPx)) break
+          e--
+          changed = true
+        }
+      }
+
+      if (!changed) return
+      startKey.value = getKey(items[s]!)
+      endKey.value = getKey(items[e]!)
+      await nextTick()
+      if (expectedGeneration !== generation) return
+      restoreAnchor(anchor, intendedOffset)
+    }
+  }
+
+  async function runPagination(
+    dir: Direction,
+    growHint?: number,
+    expectedGeneration = generation,
+    landing = false,
+  ): Promise<void> {
+    if (expectedGeneration !== generation || isPaginating.value[dir]) return
     const bufferedOverflow = hasBufferedOverflow(dir)
     if (!bufferedOverflow && !hasMoreFor(dir)) return
     const debug = cfg.debug()
     isPaginating.value = { ...isPaginating.value, [dir]: true }
+    transactionDepth++
 
     // Disable native scroll anchoring so it can't fight our manual restore (ADR-0003).
     setNativeAnchoring(false)
+    // Capture before calling consumer code: the callback may change other DOM
+    // at the edge (for example removing a loading skeleton) before it resolves.
+    const anchor = captureAnchor()
     try {
       // Buffered overflow just needs revealing — no fetch to wait on.
       if (!bufferedOverflow) {
         await onBeforePaginate(dir)
-        await nextTick()
       }
+      if (expectedGeneration !== generation) return
 
-      // Captured *after* any fetch, not before: a real fetch can take long
-      // enough for the user to keep scrolling while it's in flight, and the
-      // window's own content hasn't changed yet at this point (only `source`
-      // has grown) — so this still reflects the same on-screen landmark, just
-      // at the scroll position the user actually left it at, not a stale one
-      // from the moment the pagination was triggered.
-      const anchor = captureAnchor()
+      // Preserve user motion that occurred while the request was pending,
+      // without measuring after consumer DOM has already changed.
+      const scrollDelta = anchor && container.value ? container.value.scrollTop - anchor.scrollTop : 0
+      const intendedOffset = anchor ? anchor.viewportOffset - scrollDelta : undefined
+      await nextTick()
+      if (expectedGeneration !== generation) return
 
       // Render clock starts once fetch has resolved and we begin mounting.
       const renderStart = debug ? performance.now() : 0
@@ -316,22 +410,29 @@ export function usePaginatedScroll<T>(
       }
       growToEdgeBounded(dir, addCount)
       await nextTick()
+      if (expectedGeneration !== generation) return
 
       // Restore the anchor before trimming, so trim's viewport+buffer check
       // protects the actually-visible region.
-      restoreAnchor(anchor)
+      restoreAnchor(anchor, intendedOffset)
 
       trimWindow(dir)
       await nextTick()
+      if (expectedGeneration !== generation) return
 
       // Reassert in case a top-edge trim shifted content above the viewport.
-      restoreAnchor(anchor)
+      restoreAnchor(anchor, intendedOffset)
+      if (landing) await rotateToLandingBand(dir, anchor, intendedOffset, expectedGeneration)
 
       if (debug) recordRenderLatency(dir, performance.now() - renderStart, addCount)
     } finally {
-      setNativeAnchoring(true)
-      isPaginating.value = { ...isPaginating.value, [dir]: false }
-      refreshDebug()
+      if (expectedGeneration === generation) {
+        transactionDepth = Math.max(0, transactionDepth - 1)
+        if (transactionDepth === 0) setNativeAnchoring(true)
+        isPaginating.value = { ...isPaginating.value, [dir]: false }
+        currentAnchor = captureAnchor()
+        refreshDebug()
+      }
     }
   }
 
@@ -340,23 +441,52 @@ export function usePaginatedScroll<T>(
    * paginating edge has enough runway (or we exhaust / cap). Guarded against
    * infinite loops when a fetch adds nothing.
    */
-  async function fillToTarget(dir: Direction): Promise<void> {
+  function normalizedScrollPosition(): number {
+    const g = readGeometry()
+    if (!g) return 0
+    const range = Math.max(0, g.scrollHeight - g.clientHeight)
+    return range === 0 ? 0 : Math.max(0, Math.min(1, g.scrollTop / range))
+  }
+
+  function hasReachedLandingBand(dir: Direction): boolean {
+    const position = normalizedScrollPosition()
+    return dir === 'backward' ? position >= 0.75 : position <= 0.25
+  }
+
+  async function fillToTarget(
+    dir: Direction,
+    opts: { expectedGeneration?: number; forceFirst?: boolean; landing?: boolean } = {},
+  ): Promise<void> {
+    const expectedGeneration = opts.expectedGeneration ?? generation
     let guard = 0
+    let attempted = false
     // Doubles when a buffered-overflow increment was too small to survive
     // trimWindow; resets once an attempt sticks.
     let overflowStep: number | undefined
     while (guard++ < 50) {
-      const g = readGeometry()
-      if (!g) return
+      if (expectedGeneration !== generation) return
       const need = px(cfg.triggerDistance()) + px(cfg.buffer())
-      if (distanceToEdge(g, dir) > need) return
+      if (attempted || !opts.forceFirst) {
+        if (opts.landing ? hasReachedLandingBand(dir) : distanceToItemEdge(dir) > need) return
+      }
       if (!hasMoreFor(dir) && !hasBufferedOverflow(dir)) return
 
       // Track the window, not the source: a buffered-overflow reveal grows the
       // window without the source growing.
       const lenBefore = window.value.length
-      await runPagination(dir, overflowStep)
-      if (window.value.length === lenBefore) {
+      const sourceLenBefore = sourceItems.value.length
+      const startBefore = startKey.value
+      const endBefore = endKey.value
+      const scrollBefore = container.value?.scrollTop
+      await runPagination(dir, overflowStep, expectedGeneration, opts.landing)
+      attempted = true
+      const madeProgress =
+        window.value.length !== lenBefore ||
+        sourceItems.value.length !== sourceLenBefore ||
+        startKey.value !== startBefore ||
+        endKey.value !== endBefore ||
+        container.value?.scrollTop !== scrollBefore
+      if (!madeProgress) {
         // No progress. For a buffered-overflow reveal this can just mean the
         // increment was too small and trimWindow cut it straight back off —
         // retry bigger instead of giving up.
@@ -390,6 +520,62 @@ export function usePaginatedScroll<T>(
     lastScrollTop = el.scrollTop
   }
 
+  const rowHeights = new Map<ItemKey, number>()
+  const keyByElement = new WeakMap<HTMLElement, ItemKey>()
+  let rowResizeObserver: ResizeObserver | null = null
+
+  function ensureRowResizeObserver(): ResizeObserver | null {
+    if (rowResizeObserver || typeof ResizeObserver === 'undefined') return rowResizeObserver
+    rowResizeObserver = new ResizeObserver(entries => {
+      const wasAtLiveEdge = isAtLiveEdge.value
+      const anchor = currentAnchor
+      const anchorIndex = anchor ? keyToIndex.value.get(anchor.key) : undefined
+      let deltaAboveAnchor = 0
+
+      for (const entry of entries) {
+        const element = entry.target as HTMLElement
+        const key = keyByElement.get(element)
+        if (key === undefined) continue
+        const nextHeight = element.getBoundingClientRect().height
+        const previousHeight = rowHeights.get(key) ?? nextHeight
+        rowHeights.set(key, nextHeight)
+        if (transactionDepth > 0 || anchorIndex === undefined) continue
+
+        const itemIndex = keyToIndex.value.get(key)
+        if (itemIndex !== undefined && itemIndex < anchorIndex) deltaAboveAnchor += nextHeight - previousHeight
+      }
+
+      if (transactionDepth > 0) return
+      if (wasAtLiveEdge) scrollToBottom()
+      else if (Math.abs(deltaAboveAnchor) > 0.01 && container.value) {
+        setScrollTop(container.value.scrollTop + deltaAboveAnchor)
+      }
+      updateLiveEdgeFlag()
+      currentAnchor = captureAnchor()
+      refreshDebug()
+    })
+    return rowResizeObserver
+  }
+
+  registry.onRegister = (key, element) => {
+    keyByElement.set(element, key)
+    rowHeights.set(key, element.getBoundingClientRect().height)
+    ensureRowResizeObserver()?.observe(element)
+  }
+  registry.onUnregister = (key, element) => {
+    rowResizeObserver?.unobserve(element)
+    keyByElement.delete(element)
+    rowHeights.delete(key)
+  }
+
+  function syncRowHeights(): void {
+    for (const item of window.value) {
+      const key = getKey(item)
+      const element = registry.get(key)
+      if (element) rowHeights.set(key, element.getBoundingClientRect().height)
+    }
+  }
+
   function onScrollFrame(): void {
     scrollScheduled = false
     const g = readGeometry()
@@ -400,10 +586,11 @@ export function usePaginatedScroll<T>(
     lastScrollTop = g.scrollTop
 
     updateLiveEdgeFlag()
+    if (transactionDepth === 0) currentAnchor = captureAnchor()
 
     const triggerPx = px(cfg.triggerDistance())
     for (const dir of DIRECTIONS) {
-      const dist = distanceToEdge(g, dir)
+      const dist = distanceToItemEdge(dir)
       // Re-arm latch once the user has left the zone (with a little hysteresis).
       if (dist > triggerPx * 1.5) latchReleased[dir] = true
 
@@ -420,7 +607,8 @@ export function usePaginatedScroll<T>(
         filling[dir] = true
         // fillToTarget, not a one-shot runPagination — chains fetches until the
         // buffer is satisfied, so a fast continuous scroll can't outrun it.
-        void fillToTarget(dir).finally(() => {
+        const expectedGeneration = generation
+        void fillToTarget(dir, { expectedGeneration, forceFirst: true, landing: true }).finally(() => {
           filling[dir] = false
           // Re-arm immediately: fillToTarget's own exhaustion check already
           // guards against a same-direction refire loop.
@@ -486,40 +674,149 @@ export function usePaginatedScroll<T>(
     else setScrollTop(0)
   }
 
-  function pinToInitialEdge(): void {
+  function pinToEdge(edge: Direction): void {
     const el = container.value
     if (!el) return
-    if (initialEdge === 'forward') setScrollTop(el.scrollHeight)
+    if (edge === 'forward') setScrollTop(el.scrollHeight)
     else setScrollTop(0)
   }
 
-  async function bootstrap(): Promise<void> {
+  async function performBootstrap(expectedGeneration: number, edge: Direction): Promise<void> {
     const items = sourceItems.value
     if (items.length === 0) return
 
     // nextTick flushes Vue's patch but not CSS layout; wait for a real height
     // before trimming, or a cold/hidden container would measure as 0.
     await waitForStableViewport()
+    if (expectedGeneration !== generation) return
 
     // Mount the whole seeded range (capped by maxItems), pin to the edge, then
     // trim to targetHeight against real measured heights.
     startKey.value = getKey(items[0]!)
     endKey.value = getKey(items.at(-1)!)
-    growToEdge(initialEdge)
+    growToEdge(edge)
+    await nextTick()
+    if (expectedGeneration !== generation) return
+
+    pinToEdge(edge)
+    await nextTick()
+    if (expectedGeneration !== generation) return
+
+    trimWindow(edge)
+    await nextTick()
+    if (expectedGeneration !== generation) return
+
+    pinToEdge(edge) // trim changed content; reassert the edge
+
+    await fillToTarget(OPPOSITE[edge], { expectedGeneration })
+    if (expectedGeneration !== generation) return
+    pinToEdge(edge)
+    syncRowHeights()
+    updateLiveEdgeFlag()
+    currentAnchor = captureAnchor()
+    refreshDebug()
+  }
+
+  function bootstrap(expectedGeneration = generation, edge: Direction = initialEdge): Promise<void> {
+    const active = bootstrapInFlight
+    if (active?.generation === expectedGeneration && active.edge === edge) return active.promise
+
+    const task: Promise<void> = performBootstrap(expectedGeneration, edge).finally(() => {
+      if (bootstrapInFlight?.promise === task) bootstrapInFlight = null
+    })
+    bootstrapInFlight = { edge, generation: expectedGeneration, promise: task }
+    return task
+  }
+
+  function invalidate(): number {
+    generation++
+    bootstrapInFlight = null
+    transactionDepth = 0
+    setNativeAnchoring(true)
+    startKey.value = null
+    endKey.value = null
+    latchReleased.backward = true
+    latchReleased.forward = true
+    filling.backward = false
+    filling.forward = false
+    isPaginating.value = { backward: false, forward: false }
+    isAtLiveEdge.value = false
+    scrollDir = null
+    currentAnchor = null
+    rowHeights.clear()
+    if (scrollTimer) clearTimeout(scrollTimer)
+    scrollTimer = null
+    scrollScheduled = false
+    return generation
+  }
+
+  function captureState(): PaginatedScrollState | null {
+    const anchor = captureAnchor()
+    const g = readGeometry()
+    if (!anchor || !g || startKey.value === null || endKey.value === null) return null
+    return {
+      anchorKey: anchor.key,
+      anchorViewportOffset: anchor.viewportOffset,
+      atLiveEdge: isAtLiveEdge.value,
+      scrollTop: g.scrollTop,
+      windowEndKey: endKey.value,
+      windowStartKey: startKey.value,
+    }
+  }
+
+  async function reset(): Promise<void> {
+    const expectedGeneration = invalidate()
+    await nextTick()
+    await bootstrap(expectedGeneration)
+  }
+
+  async function restoreState(state: PaginatedScrollState): Promise<boolean> {
+    const expectedGeneration = invalidate()
     await nextTick()
 
-    pinToInitialEdge()
+    if (state.atLiveEdge) {
+      await bootstrap(expectedGeneration, 'forward')
+      return expectedGeneration === generation
+    }
+
+    const items = sourceItems.value
+    const anchorIndex = keyToIndex.value.get(state.anchorKey)
+    if (anchorIndex === undefined) {
+      await bootstrap(expectedGeneration)
+      return false
+    }
+
+    const savedStart = keyToIndex.value.get(state.windowStartKey)
+    const savedEnd = keyToIndex.value.get(state.windowEndKey)
+    let s = savedStart ?? Math.max(0, anchorIndex - Math.floor(cfg.maxItems() / 2))
+    let e = savedEnd ?? Math.min(items.length - 1, s + cfg.maxItems() - 1)
+    if (s > anchorIndex || e < anchorIndex || s > e) {
+      s = Math.max(0, anchorIndex - Math.floor(cfg.maxItems() / 2))
+      e = Math.min(items.length - 1, s + cfg.maxItems() - 1)
+    }
+    if (e - s + 1 > cfg.maxItems()) {
+      s = Math.max(s, anchorIndex - Math.floor((cfg.maxItems() - 1) / 2))
+      e = Math.min(items.length - 1, s + cfg.maxItems() - 1)
+    }
+
+    startKey.value = getKey(items[s]!)
+    endKey.value = getKey(items[e]!)
     await nextTick()
+    await waitForStableViewport()
+    if (expectedGeneration !== generation) return false
 
-    trimWindow(initialEdge)
+    // Try the exact numeric coordinate first, then correct against content
+    // identity so layout changes cannot move the saved event.
+    setScrollTop(state.scrollTop)
     await nextTick()
-
-    pinToInitialEdge() // trim changed content; reassert the edge
-
-    await fillToTarget(OPPOSITE[initialEdge])
-    pinToInitialEdge()
+    restoreAnchor(
+      { key: state.anchorKey, scrollTop: state.scrollTop, viewportOffset: state.anchorViewportOffset },
+      state.anchorViewportOffset,
+    )
+    syncRowHeights()
     updateLiveEdgeFlag()
     refreshDebug()
+    return true
   }
 
   function recordRenderLatency(dir: Direction, ms: number, added: number): void {
@@ -553,20 +850,20 @@ export function usePaginatedScroll<T>(
       lastRenderMs: debugState.value?.lastRenderMs ?? null,
       triggers: {
         backward: resolveTrigger({
-          distanceToEdge: distanceToEdge(geo, 'backward'),
-          triggerPx,
+          directionActive: scrollDir === 'backward',
+          distanceToEdge: distanceToItemEdge('backward'),
           hasMore: hasMoreFor('backward') || hasBufferedOverflow('backward'),
           latchReleased: latchReleased.backward,
-          directionActive: scrollDir === 'backward',
           paginating: isPaginating.value.backward || filling.backward,
+          triggerPx,
         }),
         forward: resolveTrigger({
-          distanceToEdge: distanceToEdge(geo, 'forward'),
-          triggerPx,
+          directionActive: scrollDir === 'forward',
+          distanceToEdge: distanceToItemEdge('forward'),
           hasMore: hasMoreFor('forward') || hasBufferedOverflow('forward'),
           latchReleased: latchReleased.forward,
-          directionActive: scrollDir === 'forward',
           paginating: isPaginating.value.forward || filling.forward,
+          triggerPx,
         }),
       },
       viewportHeight: currentViewportPx(),
@@ -579,28 +876,31 @@ export function usePaginatedScroll<T>(
 
   onMounted(async () => {
     await nextTick()
-    await bootstrap()
+    await reset()
   })
 
-  // Re-bootstrap if the source arrives after mount (async seed).
-  const stopSeedWatch = watch(
+  // Re-bootstrap whenever a reset source receives its asynchronous seed.
+  watch(
     () => sourceItems.value.length,
     async len => {
       if (len > 0 && startKey.value === null && endKey.value === null) {
-        await bootstrap()
-        stopSeedWatch()
+        await bootstrap(generation)
       }
     },
   )
 
   onBeforeUnmount(() => {
     if (scrollTimer) clearTimeout(scrollTimer)
+    rowResizeObserver?.disconnect()
   })
 
   return {
+    captureState,
     debugState,
     isAtLiveEdge,
     isPaginating,
+    reset,
+    restoreState,
     scrollToEdge,
     vItem,
     window,

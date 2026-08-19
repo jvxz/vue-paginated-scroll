@@ -7,6 +7,7 @@ export type {
   ItemKey,
   PaginatedScroll,
   PaginatedScrollOptions,
+  PaginatedScrollState,
   DebugState,
   TriggerDebugInfo,
 } from './types'

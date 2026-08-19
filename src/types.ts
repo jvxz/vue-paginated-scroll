@@ -93,6 +93,24 @@ export interface PaginatedScrollOptions<T> {
   slowPaginationMs?: MaybeRefOrGetter<number>
 }
 
+/**
+ * Serializable bookmark for restoring a bounded window without depending on
+ * the scroll container having exactly the same height as when it was saved.
+ */
+export interface PaginatedScrollState {
+  /** The item pinned when the state was captured. */
+  anchorKey: ItemKey
+  /** The item's top offset from the viewport top, in CSS pixels. */
+  anchorViewportOffset: number
+  /** Exact-coordinate fast path when the restored layout is unchanged. */
+  scrollTop: number
+  /** A live-edge bookmark follows newly-arrived items on restore. */
+  atLiveEdge: boolean
+  /** Saved bounded-window edges, used when they still exist in the source. */
+  windowStartKey: ItemKey
+  windowEndKey: ItemKey
+}
+
 /** A trigger zone's live geometry + arm state, for the debug overlay. */
 export interface TriggerDebugInfo {
   /** Distance in px from the current scroll position to this edge. */
@@ -130,4 +148,13 @@ export interface PaginatedScroll<T> {
   scrollToEdge: (direction: Direction) => Promise<void>
   /** State for `<PaginatedScrollDebug>`. `null` unless `debug` is on. */
   readonly debugState: Ref<DebugState | null>
+  /** Capture the current content-relative scroll bookmark. */
+  captureState: () => PaginatedScrollState | null
+  /**
+   * Invalidate old work and restore a bookmark against the current source.
+   * Returns false after falling back to `initialEdge` when the anchor is stale.
+   */
+  restoreState: (state: PaginatedScrollState) => Promise<boolean>
+  /** Invalidate old work and bootstrap the current source at `initialEdge`. */
+  reset: () => Promise<void>
 }
