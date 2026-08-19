@@ -1,0 +1,7 @@
+# Item-relative edges and unified scroll transactions
+
+**Context.** Consumers may render non-item chrome before or after the bounded window: loading skeletons, headers, spacers, and composer clearance. Container-relative trigger math treats that chrome as pagination runway. Fetch callbacks may also change the chrome before resolving, so measuring an anchor afterward preserves an already-shifted viewport. Source identity can also change while an older asynchronous pagination is still awaiting.
+
+**Decision.** Pagination distances are measured from the first and last registered item, while trigger resolution remains scalar geometry with the existing latch and direction gates. Each pagination is one transaction: capture a fully-visible anchor before consumer code, track scroll-coordinate movement while awaiting, mutate the window, restore the intended item offset, trim, and rotate safely-offscreen stale content toward the opposite scrollbar quarter. A generation invalidates stale continuations during reset or restore. A shared `ResizeObserver` compensates later registered-row reflows above the active anchor, or re-pins the live edge.
+
+**Consequences.** Consumer chrome no longer delays pagination or corrupts anchoring. Pagination and session restoration share the same item-identity model. The 25%/75% landing bands are best-effort when exhaustion, `maxItems`, or viewport-plus-buffer protection makes the requested position impossible; those hard safety invariants win.

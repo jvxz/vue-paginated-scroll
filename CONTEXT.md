@@ -5,7 +5,7 @@ A headless Vue composable for implementing bidirectional paginated scrolling (th
 ## Language
 
 **Trigger**:
-The per-direction condition that fires a pagination: the user has scrolled within `triggerDistance` (a viewport-multiple) of an edge. Implemented as **pure scroll-position math** over `scrollTop`/`scrollHeight`/`clientHeight` — deliberately _not_ a DOM sentinel element or `IntersectionObserver`, because loop-prevention (re-arm latching, direction gating) is far easier to reason about against a continuous distance-to-edge scalar than against binary visibility events. A trigger can be _armed_ or _disarmed_ (by direction gating, re-arm latching, or exhaustion).
+The per-direction condition that fires a pagination: the user has scrolled within `triggerDistance` (a viewport-multiple) of the first or last registered item. Implemented as continuous item/viewport geometry — deliberately _not_ a sentinel element or `IntersectionObserver` — so non-item consumer chrome does not count as runway and loop-prevention remains scalar. A trigger can be _armed_ or _disarmed_ (by direction gating, re-arm latching, or exhaustion).
 _Avoid_: sentinel (rejected — implies a DOM marker element, which this is not), IntersectionObserver, hitbox.
 
 **Live edge**:
@@ -39,6 +39,9 @@ _Avoid_: fetch latency (explicitly not measured), mount time, lag.
 **Anchor element**:
 A real, currently-visible item element the library pins during a pagination so it stays visually fixed while the window grows on one edge and trims on the other. The library records its position before the DOM mutation and restores it after, making scroll preservation immune to how much was added or removed. Chosen as the least-likely-to-reflow visible element. This is the universal, deterministic scroll-preservation mechanism, working identically across all browsers.
 _Avoid_: scroll token, pivot, reference node.
+
+**Scroll state**:
+A serializable, content-relative bookmark containing a visible anchor item's key and viewport offset, the bounded-window edge keys, the captured `scrollTop` fast path, and whether the user was at the live edge. The consumer owns storage lifetime; the library owns capture and restoration geometry.
 
 **Buffer**:
 The runway of rendered-but-not-visible content the library deliberately keeps on the _opposite_ side of the scroll direction after a trim. Expressed as a viewport-multiple. Serves two jobs: (1) it stops the just-trimmed edge from sitting right at the trigger point (which would re-fire pagination — see **Pagination loop**), and (2) it gives the user reaction runway if they reverse scroll direction before the next trigger should fire.

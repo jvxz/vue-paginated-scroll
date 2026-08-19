@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.0
+
+- Use registered item edges for pagination triggers so consumer skeletons and spacing do not delay loading.
+- Preserve anchors through fetch-driven DOM changes, late row reflows, and source lifecycle resets.
+- Add serializable `PaginatedScrollState` with `captureState`, `restoreState`, and `reset` APIs.
+- Rotate successful pagination toward opposite outer-quarter scrollbar landing bands when safety constraints allow.
+- Add Chromium and WebKit browser regression coverage.
 
 ## v1.0.8
 
@@ -18,7 +25,6 @@
 [compare changes](https://github.com/jvxz/vue-paginated-scroll/compare/v1.0.1...v1.0.2)
 
 ## ...main
-
 
 ### 🚀 Enhancements
 
@@ -49,4 +55,3 @@
 ### ❤️ Contributors
 
 - Jamie <hi@jamie.to>
-

@@ -2,14 +2,13 @@
 
 **Context.** Enabling `followTail` (and handling edits/redactions/optimistic echoes) means the library must react to the source changing when it didn't trigger the change. This partially revisits an earlier stance that the library had no reason to observe the source. It also raises how much the library owns for _mid-window_ mutations (an edit above the fold shifting content, a redaction removing a windowed item).
 
-**Decision.**
+**Decision (superseded in part by ADR-0005).**
 
 - The library **watches the source ref** to know _that_ it changed and recompute — but **never diffs to learn _what_ changed**. The window is a pure, **idempotent** function of current state (source + keys + anchor + geometry). If a mutation is handled by both the pagination bracket and the source watch, running the recompute twice is harmless.
 - **Two paths, deliberately different:**
   - _Pagination_ is **bracketed**: measure anchor → `await onBeforePaginate` → recompute → restore anchor (needs the "before" measurement, so it cannot be a passive watch).
   - _Unsolicited growth / mutation_ is **watch-driven**: source changes → recompute → apply follow policy.
-- **Mid-window mutations, core behavior = recompute only (option A).** A redaction drops the item from the window; an edit re-renders. The library does **not** deterministically preserve scroll for mid-window height changes in the core — those get `overflow-anchor` for free where supported, nothing on Safari.
-- **Deterministic mid-window height-anchoring is opt-in (option B, later).** Implemented via a **single shared `ResizeObserver`** piggybacked on the `v-pgs-item` directive (observe on register, unobserve on unregister).
+- **Mid-window registered-row height changes are now deterministic.** A single shared `ResizeObserver` piggybacks on `v-pgs-item` and compensates changes above the active anchor or preserves a live-edge pin.
 
 **Consequences.**
 

@@ -53,13 +53,13 @@ resize and across devices. Knobs, all expressed as multiples of viewport height:
 
 ## 4. Pagination lifecycle (backward / scroll-up shown)
 
-1. **Trigger fires** — user scrolled within `triggerDistance` of the top edge.
-2. **Measure anchor** — record the position of a visible, least-likely-to-reflow item element.
+1. **Trigger fires** — the first registered item enters the backward trigger band; consumer chrome above it is ignored.
+2. **Measure anchor** — record a fully-visible, center-near item before consumer code runs.
 3. **`await onBeforePaginate('backward')`** — the consumer fetches a page and prepends to `source`.
-4. **Recompute window** — pure, idempotent function of current state (source + keys + anchor + geometry):
+4. **Account for user motion** — apply the scroll-coordinate delta accumulated while the fetch awaited to the intended anchor offset.
+5. **Recompute window** — pure, idempotent function of current state (source + keys + anchor + geometry):
    grow the top toward `targetHeight`, trim the bottom back down.
-5. **Restore anchor** — set `scrollTop` so the anchor element is visually exactly where it was.
-   Runs post-flush, before paint — no visible intermediate frame.
+6. **Restore and rotate** — restore the anchor, then safely trim stale content toward the opposite outer-quarter landing band.
 
 The recompute is **declarative and idempotent**: the library never diffs `source` to learn _what_
 changed, only recomputes from current state. Running it twice is harmless.
@@ -73,16 +73,15 @@ paginate). Prevented by three cooperating layers so no single failure breaks it:
 2. **Re-arm latching** — a fired trigger is disarmed until the user leaves its zone and returns.
 3. **Direction gating** — only the trigger matching current scroll direction is armed.
 
-The trigger itself is **pure scroll-position math** (a continuous distance-to-edge scalar), not a DOM
-sentinel — latching/gating are far easier to reason about against a scalar than binary visibility events.
+The trigger itself is **continuous registered-item geometry**, not a DOM sentinel. Consumer chrome is
+excluded while latching/gating remain easier to reason about against a scalar than binary visibility events.
 
 ## 6. Scroll preservation ([ADR-0003](./docs/adr/0003-anchor-element-primary-overflow-anchor-supplemental.md))
 
 - **Anchor-element compensation is the universal primary.** Pin a visible landmark element across the
   grow+trim; correctness is independent of how much was added/removed. Works identically on every browser.
-- **`overflow-anchor` is supplemental only.** It's unsupported on all Safari through v26 (~79% global,
-  the missing ~21% is WebKit/iOS — a primary chat target), so it can't anchor our paginations. It earns
-  its keep only for _incidental_ reflows _between_ paginations (a late image loading above the fold).
+- **A shared `ResizeObserver` handles registered-row reflows.** Height changes above the active anchor
+  adjust `scrollTop`; at the live edge they re-pin the bottom. Native anchoring remains supplemental.
 - During the anchor restore, the library asserts `overflow-anchor: none` so the browser can't
   double-correct and fight the manual `scrollTop` set.
 
@@ -119,13 +118,17 @@ Two dispatch paths, deliberately different:
 - _Pagination_ is **bracketed** (needs a "before" measurement, §4).
 - _Unsolicited growth/mutation_ is **watch-driven** (source changed → recompute → apply follow policy).
 
-**Mid-window mutations** (edits, redactions, optimistic echoes): core does **recompute only** (a redaction
-drops the item; an edit re-renders) — no deterministic height-anchoring, those get `overflow-anchor` for
-free where supported. Deterministic mid-window height-anchoring is a **later opt-in** via a single shared
-`ResizeObserver` piggybacked on `v-pgs-item`. Overhead isn't the gate (a shared RO over ~150 rows is
-sub-frame — it fires only on actual resize, batched before paint); the gate is scope/correctness.
+**Mid-window registered-row reflows** (edits, redactions, optimistic echoes, late media) are observed by
+one shared `ResizeObserver`, preserving either the active anchor or the live-edge bottom pin.
 
-## 10. Dev experience
+## 10. Source lifecycle and restoration
+
+The consumer stores `PaginatedScrollState`; the library exposes `captureState()`, `restoreState()`, and
+`reset()`. Reset and restore advance a generation so older async pagination continuations become no-ops.
+A live-edge bookmark follows the current newest item. A missing anchor is stale and falls back to
+`initialEdge` without fetching solely to recover it.
+
+## 11. Dev experience
 
 - **Render-latency warning** — times only the **render clock** (recompute → rows painted), _excluding_
   the fetch (consumer owns fetching, library owns rendering). Over `slowPaginationMs` (~50ms default) it
@@ -139,7 +142,7 @@ sub-frame — it fires only on actual resize, batched before paint); the gate is
   visual is one import away; vanishes from prod builds. Answers "when" (arm-state colors / fire pulse) and
   "where" (band positions).
 
-## 11. Bootstrap
+## 12. Bootstrap
 
 Seed + fill-to-target: the consumer seeds `source`; the library sets the initial window to `initialEdge`
 (`'forward'` default = live edge / bottom, chat archetype; `'backward'` for feeds), scrolls there, then
@@ -159,6 +162,9 @@ const {
   isPaginating,    // per-direction reactive state
   scrollToEdge,    // (direction) => Promise<void>
   debugState,      // feed to <PaginatedScrollDebug>
+  captureState,    // () => PaginatedScrollState | null
+  restoreState,    // (state) => Promise<boolean>
+  reset,           // () => Promise<void>
 } = usePaginatedScroll(containerRef, {
   source,                              // Ref<T[]> — consumer-owned, mutated only in onBeforePaginate
   getKey: (item) => item.event_id,     // required identity

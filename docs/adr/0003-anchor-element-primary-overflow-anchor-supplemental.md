@@ -6,8 +6,9 @@ Native `overflow-anchor` (C) is tempting as a zero-code primary, but it is **uns
 
 **Decision.**
 
-- **(B) Anchor-element compensation is the universal, deterministic primary.** Before the mutation the library records the position of a chosen visible item element; after the DOM flush (post-flush tick, before paint) it restores that element's position. Correctness is independent of how much was added/removed — it pins a landmark rather than doing delta arithmetic (rejecting A, which is fragile to async reflow). It behaves identically across all browsers.
-- **(C) `overflow-anchor` is supplemental only**, earning its keep for _incidental_ reflows _between_ paginations (e.g. a late-loading image/embed above the viewport) which B structurally cannot cover because B only runs on pagination events. It is a bonus on the ~79% that support it, never depended upon.
+- **(B) Anchor-element compensation is the universal, deterministic primary.** Before consumer pagination code runs, the library records a fully-visible item and its offset. Scroll-coordinate movement while the fetch awaits updates the intended offset without measuring after consumer DOM has changed. After each DOM flush it restores the item. Correctness is independent of how much was added/removed and behaves identically across browsers.
+- **Registered-row reflows are deterministic**, handled by one shared `ResizeObserver` that compensates height changes above the active anchor or preserves the live-edge bottom pin.
+- **(C) `overflow-anchor` is supplemental only** for unregistered consumer DOM reflows. It is never depended upon.
 - During B's correction window the library asserts **`overflow-anchor: none`** so the browser cannot also correct and fight B's manual `scrollTop` set (the classic double-correction jump); auto is relied on only for the incidental case.
 - (D) `column-reverse` rejected: it fights upward-pagination anchoring, complicates selection/accessibility, and dictates layout to a headless library.
 
