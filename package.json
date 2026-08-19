@@ -14,10 +14,6 @@
   ],
   "license": "MIT",
   "author": "Jamie",
-  "packageManager": "pnpm@11.9.0",
-  "engines": {
-    "node": ">=20"
-  },
   "files": [
     "dist"
   ],
@@ -42,6 +38,7 @@
     "prepublishOnly": "pnpm build",
     "release": "bumpp && changelogen --release --push && npm publish --access public",
     "test": "vitest run",
+    "test:browser": "playwright test",
     "test:watch": "vitest",
     "typecheck": "vue-tsc --noEmit"
   },
@@ -50,6 +47,7 @@
   },
   "devDependencies": {
     "@e18e/eslint-plugin": "^0.5.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^26.1.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.11",
@@ -66,5 +64,9 @@
   },
   "peerDependencies": {
     "vue": "^3.4.0"
-  }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.9.0"
 }
