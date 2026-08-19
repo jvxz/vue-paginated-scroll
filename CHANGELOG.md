@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.1.2
+
+[compare changes](https://github.com/jvxz/vue-paginated-scroll/compare/v1.1.1...v1.1.2)
+
 ## v1.1.0
 
 - Use registered item edges for pagination triggers so consumer skeletons and spacing do not delay loading.
