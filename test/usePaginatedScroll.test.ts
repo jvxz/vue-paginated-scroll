@@ -42,7 +42,7 @@ function installLayoutStub(container: HTMLElement, scrollTopRef: { value: number
     configurable: true,
     get: () => {
       let total = 0
-      for (const child of Array.from(container.children)) {
+      for (const child of container.children) {
         total += Number((child as HTMLElement).dataset.h ?? 0)
       }
       return total
@@ -65,7 +65,7 @@ function installLayoutStub(container: HTMLElement, scrollTopRef: { value: number
     }
     if (this.dataset.h !== undefined && this.parentElement === container) {
       let top = 0
-      for (const child of [...container.children]) {
+      for (const child of container.children) {
         if (child === this) break
         top += Number((child as HTMLElement).dataset.h ?? 0)
       }

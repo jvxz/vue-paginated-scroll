@@ -45,7 +45,7 @@ const { window, vItem, isAtLiveEdge, isPaginating, scrollToEdge, debugState } = 
         events.value = [...events.value, ...page]
         triggerRef(events)
       }
-      canNewer.value = timeline.canGoNewer(page[page.length - 1]?.id ?? lastId.value)
+      canNewer.value = timeline.canGoNewer(page.at(-1)?.id ?? lastId.value)
     }
   },
   slowPaginationMs: 40,
