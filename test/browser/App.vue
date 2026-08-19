@@ -15,6 +15,15 @@ const lifecycleStatus = ref<'busy' | 'idle'>('idle')
 const savedKey = ref<number | null>(null)
 let savedState: PaginatedScrollState | null = null
 
+// `?barren=N` makes the first N backward fetches resolve without growing the
+// source. Real consumers hit this whenever a fetched page belongs somewhere the
+// rendered list doesn't show it — in Matrix, a page of thread replies, which the
+// main timeline discards wholesale. It is not the start of the data.
+const barrenLeft = ref(Number(new URLSearchParams(location.search).get('barren') ?? 0))
+// `?tall=1` makes the viewport taller than the initial content, so the container
+// starts with no scrollable range at all.
+const tallViewport = new URLSearchParams(location.search).get('tall') === '1'
+
 const api = usePaginatedScroll(container, {
   buffer: 0.5,
   followTail: true,
@@ -25,6 +34,10 @@ const api = usePaginatedScroll(container, {
     if (direction !== 'backward') return
     fetches.value++
     await new Promise(resolve => setTimeout(resolve, 80))
+    if (barrenLeft.value > 0) {
+      barrenLeft.value--
+      return
+    }
     const first = source.value[0]!
     const last = source.value.at(-1)!
     source.value = [
@@ -64,6 +77,14 @@ async function reset() {
   }
 }
 
+// Mirrors a consumer whose source is fed by something other than pagination
+// (a sync loop, a socket): items appear at the front without onBeforePaginate
+// ever running, so the window has to be able to extend into them on its own.
+function growExternally() {
+  const first = source.value[0]!
+  source.value = [...Array.from({ length: 50 }, (_, index) => first - 50 + index), ...source.value]
+}
+
 function resizeAboveAnchor() {
   const state = api.captureState()
   if (!state) return
@@ -88,14 +109,17 @@ onMounted(async () => {
     <button data-testid="reset" @click="reset">reset</button>
     <button data-testid="restore" @click="restore">restore</button>
     <button data-testid="resize" @click="resizeAboveAnchor">resize</button>
+    <button data-testid="grow-external" @click="growExternally">grow</button>
     <output data-testid="fetches">{{ fetches }}</output>
     <output data-testid="lifecycle-status">{{ lifecycleStatus }}</output>
     <output data-testid="saved-key">{{ savedKey }}</output>
     <output data-testid="window-start">{{ paginationWindow[0] }}</output>
     <output data-testid="window-end">{{ paginationWindow.at(-1) }}</output>
+    <output data-testid="window-count">{{ paginationWindow.length }}</output>
+    <output data-testid="source-count">{{ source.length }}</output>
   </div>
 
-  <div ref="container" class="scroller" data-testid="scroller">
+  <div ref="container" class="scroller" :class="{ tall: tallViewport }" data-testid="scroller">
     <div v-if="showSkeleton" class="skeleton" data-testid="skeleton" />
     <div
       v-for="id in paginationWindow"
@@ -128,6 +152,10 @@ body {
   height: 400px;
   overflow-y: scroll;
   overflow-anchor: none;
+}
+
+.scroller.tall {
+  height: 2000px;
 }
 
 .skeleton {

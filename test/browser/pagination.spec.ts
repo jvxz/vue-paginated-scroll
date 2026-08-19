@@ -108,3 +108,77 @@ test('lands forward in the opposite outer quarter with footer chrome present', a
   })
   expect(ratio).toBeLessThanOrEqual(0.25)
 })
+
+test('recovers when backward pages resolve without growing the source', async ({ page }) => {
+  // Three fetches that add nothing, then normal pages. A page the consumer can't
+  // place is not the start of the data, so the window must still advance.
+  await page.goto('/?barren=3')
+  await waitForBootstrap(page)
+
+  const startBefore = await page.locator('[data-testid="window-start"]').textContent()
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await page.locator(scroller).evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+    })
+    await page.waitForTimeout(300)
+    const start = await page.locator('[data-testid="window-start"]').textContent()
+    if (Number(start) < Number(startBefore)) break
+  }
+
+  const startAfter = await page.locator('[data-testid="window-start"]').textContent()
+  expect(Number(startAfter)).toBeLessThan(Number(startBefore))
+
+  // and the window must actually cover what was fetched, not strand it
+  const [windowCount, sourceCount] = await Promise.all([
+    page.locator('[data-testid="window-count"]').textContent(),
+    page.locator('[data-testid="source-count"]').textContent(),
+  ])
+  expect(Number(sourceCount)).toBeGreaterThan(30)
+  expect(Number(windowCount)).toBeGreaterThan(10)
+})
+
+test('extends the window into source items that arrived outside pagination', async ({ page }) => {
+  const startBefore = Number(await page.locator('[data-testid="window-start"]').textContent())
+
+  await page.locator('[data-testid="grow-external"]').click()
+  await page.waitForTimeout(100)
+
+  const sourceCount = Number(await page.locator('[data-testid="source-count"]').textContent())
+  expect(sourceCount).toBeGreaterThanOrEqual(80)
+
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await page.locator(scroller).evaluate(element => {
+      element.scrollTop = 0
+      element.dispatchEvent(new Event('scroll'))
+    })
+    await page.waitForTimeout(300)
+    if (Number(await page.locator('[data-testid="window-start"]').textContent()) < startBefore) break
+  }
+
+  const startAfter = Number(await page.locator('[data-testid="window-start"]').textContent())
+  const windowCount = Number(await page.locator('[data-testid="window-count"]').textContent())
+
+  // the wedge in magi looked like source=80 / window=4: plenty loaded, none shown
+  expect(startAfter).toBeLessThan(startBefore)
+  expect(windowCount).toBeGreaterThan(10)
+})
+
+test('keeps filling when the window is shorter than the viewport', async ({ page }) => {
+  // No scrollable range means no future scroll event, so a trigger that is armed
+  // and ready can never be acted on. The fill has to re-drive itself.
+  await page.goto('/?tall=1')
+  await expect(page.locator('[data-testid="window-end"]')).toHaveText('129')
+  await page.waitForTimeout(1500)
+
+  const geometry = await page.locator(scroller).evaluate(element => ({
+    client: element.clientHeight,
+    scroll: element.scrollHeight,
+  }))
+  const windowCount = Number(await page.locator('[data-testid="window-count"]').textContent())
+
+  // content must have grown past the viewport, not parked underneath it
+  expect(geometry.scroll).toBeGreaterThan(geometry.client)
+  expect(windowCount).toBeGreaterThan(30)
+})

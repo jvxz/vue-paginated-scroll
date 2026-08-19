@@ -504,6 +504,10 @@ export function usePaginatedScroll<T>(
   // Set for the whole fillToTarget sequence, not just one runPagination call —
   // prevents an overlapping fill starting mid-chain.
   const filling: Record<Direction, boolean> = { backward: false, forward: false }
+  // See redriveIfUnscrollable: consecutive fills that left the container with no
+  // scrollable range, per direction.
+  const idleFills: Record<Direction, number> = { backward: 0, forward: 0 }
+  const MAX_IDLE_FILLS = 8
   let lastScrollTop = 0
   let scrollDir: Direction | null = null
   let scrollScheduled = false
@@ -576,6 +580,30 @@ export function usePaginatedScroll<T>(
     }
   }
 
+  /**
+   * Every fire path runs inside a scroll frame, and scroll frames only happen on
+   * scroll events. A window shorter than the viewport has no scrollable range, so
+   * no scroll event can ever arrive — pagination parks with its trigger armed and
+   * `shouldFire` true, forever. Re-drive the frame ourselves in that state.
+   *
+   * Bounded per direction so a source that genuinely cannot fill the viewport
+   * settles instead of spinning; the count resets as soon as content overflows.
+   */
+  function redriveIfUnscrollable(dir: Direction, expectedGeneration: number): void {
+    if (expectedGeneration !== generation) return
+
+    const g = readGeometry()
+    if (g && g.scrollHeight - g.clientHeight > 1) {
+      idleFills[dir] = 0
+      return
+    }
+    if (!hasMoreFor(dir) && !hasBufferedOverflow(dir)) return
+    if (idleFills[dir]++ >= MAX_IDLE_FILLS) return
+
+    scrollDir = dir
+    scheduleScrollFrame()
+  }
+
   function onScrollFrame(): void {
     scrollScheduled = false
     const g = readGeometry()
@@ -613,6 +641,7 @@ export function usePaginatedScroll<T>(
           // Re-arm immediately: fillToTarget's own exhaustion check already
           // guards against a same-direction refire loop.
           latchReleased[dir] = true
+          redriveIfUnscrollable(dir, expectedGeneration)
         })
       }
     }
@@ -723,6 +752,9 @@ export function usePaginatedScroll<T>(
 
     const task: Promise<void> = performBootstrap(expectedGeneration, edge).finally(() => {
       if (bootstrapInFlight?.promise === task) bootstrapInFlight = null
+      // A bootstrap that lands shorter than the viewport leaves nothing to
+      // scroll, so no scroll frame will ever run to notice there is more.
+      redriveIfUnscrollable(OPPOSITE[edge], expectedGeneration)
     })
     bootstrapInFlight = { edge, generation: expectedGeneration, promise: task }
     return task
@@ -739,6 +771,8 @@ export function usePaginatedScroll<T>(
     latchReleased.forward = true
     filling.backward = false
     filling.forward = false
+    idleFills.backward = 0
+    idleFills.forward = 0
     isPaginating.value = { backward: false, forward: false }
     isAtLiveEdge.value = false
     scrollDir = null
@@ -873,6 +907,32 @@ export function usePaginatedScroll<T>(
   }
 
   useEventListener(container, 'scroll', scheduleScrollFrame, { passive: true })
+
+  // `hasMore` commonly flips true after mount, once the consumer knows whether
+  // older data exists. If the container is unscrollable at that moment there is
+  // no scroll event coming to act on it, so re-drive here as well.
+  watch(
+    () => DIRECTIONS.map(dir => hasMoreFor(dir)),
+    () => {
+      for (const dir of DIRECTIONS) redriveIfUnscrollable(dir, generation)
+    },
+  )
+
+  // Browsers clamp setTimeout to >=1s in a hidden tab (and to ~1/minute after a
+  // few minutes), so a scroll that lands while hidden can leave the frame
+  // pending and the window stale until the next scroll. Run one directly on the
+  // way back to visible rather than waiting for the user to scroll again.
+  useEventListener(
+    () => (typeof document === 'undefined' ? null : document),
+    'visibilitychange',
+    () => {
+      if (document.visibilityState !== 'visible') return
+      if (scrollTimer) clearTimeout(scrollTimer)
+      scrollTimer = null
+      scrollScheduled = false
+      onScrollFrame()
+    },
+  )
 
   onMounted(async () => {
     await nextTick()
