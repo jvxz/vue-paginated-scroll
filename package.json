@@ -43,7 +43,7 @@
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {
-    "@vueuse/core": "^14.3.0"
+    "@vueuse/core": "^15.0.0"
   },
   "devDependencies": {
     "@e18e/eslint-plugin": "^0.5.1",
